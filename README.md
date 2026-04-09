@@ -32,27 +32,6 @@
 
 ---
 
-## 版本与打包
-
-- 当前扩展版本：`1.0.3`（见 `manifest.json`）
-- 每次推送新的 Git tag 后，GitHub Actions 会自动打包生成：`MSRegFlow-<tag>.zip`
-- Release 会优先使用 **tag 注释内容** 作为中文更新日志
-- 自动打包工作流位置：`.github/workflows/package-on-tag.yml`
-
-建议使用带中文注释的 tag：
-
-```bash
-git tag -a 1.0.2 -m "Release 1.0.2" -m "- 新增：xxx" -m "- 修复：yyy"
-```
-
-本地手动打包（按指定 tag）：
-
-```bash
-git archive --format=zip --output "dist/MSRegFlow-<tag>.zip" <tag>
-```
-
----
-
 ## 安装
 
 1. 打开 `chrome://extensions/`
@@ -60,9 +39,6 @@ git archive --format=zip --output "dist/MSRegFlow-<tag>.zip" <tag>
 3. 点击「加载已解压的扩展程序」
 4. 选择当前项目目录
 5. 打开扩展侧边栏
-
-如果你使用打包产物，也可以尝试把 `MSRegFlow-<tag>.zip` 直接拖到扩展页进行安装（取决于浏览器版本策略）。
-若浏览器不允许 zip 直装，请先解压再用「加载已解压的扩展程序」。
 
 ---
 
