@@ -715,6 +715,7 @@ header {
   border-top: 1px solid var(--border-subtle);
   font-size: 11px;
   color: var(--text-muted);
+  text-align: center;
 }
 
 .copyright-main {
@@ -722,20 +723,25 @@ header {
   font-weight: 600;
 }
 
-.copyright-links {
-  margin-top: 5px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.copyright-links a {
+.copyright-author {
   color: var(--blue);
   text-decoration: none;
 }
 
-.copyright-links a:hover {
+.copyright-author:hover {
+  text-decoration: underline;
+}
+
+.copyright-project {
+  margin-top: 5px;
+}
+
+.copyright-project a {
+  color: var(--blue);
+  text-decoration: none;
+}
+
+.copyright-project a:hover {
   text-decoration: underline;
 }
 
