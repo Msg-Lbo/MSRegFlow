@@ -3,23 +3,11 @@
 importScripts('data/names.js');
 
 const LOG_PREFIX = '[MultiPage:bg]';
-const ICLOUD_SETUP_URLS = [
-  'https://setup.icloud.com.cn/setup/ws/1',
-  'https://setup.icloud.com/setup/ws/1',
-];
-const ICLOUD_LOGIN_URLS = [
-  'https://www.icloud.com.cn/',
-  'https://www.icloud.com/',
-];
 const STOP_ERROR_MESSAGE = 'Flow stopped by user.';
-const HUMAN_STEP_DELAY_MIN = 700;
-const HUMAN_STEP_DELAY_MAX = 2200;
-const TOTAL_STEPS = 10;
-const AUTO_RUN_STEP_SEQUENCE = [1, 2, 3, 4, 5, 8, 9, 10];
-const AUTO_RUN_DISPLAY_STEP_MAP = AUTO_RUN_STEP_SEQUENCE.reduce((acc, step, index) => {
-  acc[step] = index + 1;
-  return acc;
-}, {});
+const HUMAN_STEP_DELAY_MIN = 250;
+const HUMAN_STEP_DELAY_MAX = 900;
+const TOTAL_STEPS = 7;
+const AUTO_RUN_STEP_SEQUENCE = [1, 2, 3, 4, 5, 6, 7];
 
 initializeSessionStorageAccess().catch(() => {});
 bootstrapPersistentSettings().catch((err) => {
@@ -34,7 +22,7 @@ const DEFAULT_STATE = {
   currentStep: 0,
   stepStatuses: {
     1: 'pending', 2: 'pending', 3: 'pending', 4: 'pending', 5: 'pending',
-    6: 'pending', 7: 'pending', 8: 'pending', 9: 'pending', 10: 'pending',
+    6: 'pending', 7: 'pending',
   },
   autoRunning: false,
   autoRunCurrentRun: 0,
@@ -42,12 +30,10 @@ const DEFAULT_STATE = {
   autoRunPausedPhase: null,
   language: 'zh-CN',
   oauthUrl: null,
-  autoDeleteUsedIcloudAlias: false,
   deleteAbusedMicrosoftAccount: false,
   email: null,
   password: null,
   accounts: [], // Successfully completed accounts: { email, password, createdAt }
-  manualAliasUsage: {},
   lastEmailTimestamp: null,
   localhostUrl: null,
   flowStartTime: null,
@@ -63,12 +49,11 @@ const DEFAULT_STATE = {
   sub2apiRuntimeCredential: '',
   customPassword: '',
   mailProvider: 'microsoft-manager',
-  inbucketHost: '',
-  inbucketMailbox: '',
   microsoftManagerUrl: '',
   microsoftManagerToken: '',
   microsoftManagerMode: 'graph',
   microsoftManagerKeyword: '',
+  microsoftManagerUseAliases: false,
   blockedMicrosoftEmails: {},
 };
 
@@ -79,16 +64,14 @@ const PERSISTENT_SETTING_KEYS = [
   'cpaManagementKey',
   'sub2apiBaseUrl',
   'sub2apiAdminApiKey',
-  'autoDeleteUsedIcloudAlias',
   'deleteAbusedMicrosoftAccount',
   'customPassword',
   'mailProvider',
-  'inbucketHost',
-  'inbucketMailbox',
   'microsoftManagerUrl',
   'microsoftManagerToken',
   'microsoftManagerMode',
   'microsoftManagerKeyword',
+  'microsoftManagerUseAliases',
 ];
 
 function normalizePersistentSettings(raw = {}) {
@@ -99,16 +82,14 @@ function normalizePersistentSettings(raw = {}) {
     cpaManagementKey: String(raw.cpaManagementKey || ''),
     sub2apiBaseUrl: String(raw.sub2apiBaseUrl || ''),
     sub2apiAdminApiKey: String(raw.sub2apiAdminApiKey || ''),
-    autoDeleteUsedIcloudAlias: Boolean(raw.autoDeleteUsedIcloudAlias),
     deleteAbusedMicrosoftAccount: Boolean(raw.deleteAbusedMicrosoftAccount),
     customPassword: String(raw.customPassword || ''),
     mailProvider: normalizeMailProvider(raw.mailProvider || DEFAULT_STATE.mailProvider),
-    inbucketHost: String(raw.inbucketHost || ''),
-    inbucketMailbox: String(raw.inbucketMailbox || ''),
     microsoftManagerUrl: String(raw.microsoftManagerUrl || ''),
     microsoftManagerToken: String(raw.microsoftManagerToken || ''),
     microsoftManagerMode: normalizeMicrosoftManagerMode(raw.microsoftManagerMode || DEFAULT_STATE.microsoftManagerMode),
     microsoftManagerKeyword: String(raw.microsoftManagerKeyword || ''),
+    microsoftManagerUseAliases: Boolean(raw.microsoftManagerUseAliases),
   };
 }
 
@@ -208,13 +189,6 @@ function broadcastDataUpdate(payload) {
   }).catch(() => {});
 }
 
-function broadcastIcloudAliasesChanged(payload = {}) {
-  chrome.runtime.sendMessage({
-    type: 'ICLOUD_ALIASES_CHANGED',
-    payload,
-  }).catch(() => {});
-}
-
 async function setEmailState(email) {
   await setState({ email });
   broadcastDataUpdate({ email });
@@ -249,51 +223,7 @@ async function recordCompletedAccount() {
     accounts.push(record);
   }
 
-  const manualAliasUsage = {
-    ...getManualAliasUsageMap(state),
-    [email]: true,
-  };
-
-  await setState({ accounts, manualAliasUsage });
-  broadcastIcloudAliasesChanged({ reason: 'used-updated', email, used: true });
-}
-
-async function maybeAutoDeleteCompletedIcloudAlias() {
-  const state = await getState();
-  if (!state.autoDeleteUsedIcloudAlias) return;
-
-  const email = String(state.email || '').trim();
-  if (!email) return;
-
-  if (state.mailProvider === 'microsoft-manager') {
-    try {
-      await deleteMicrosoftManagerAccountByEmail(state, email);
-      await addLog(`Microsoft Manager: Auto-deleted account ${email} after successful completion.`, 'ok');
-    } catch (err) {
-      await addLog(`Microsoft Manager: Auto-delete failed for ${email}: ${getErrorMessage(err)}`, 'warn');
-    }
-    return;
-  }
-
-  try {
-    const aliases = await listIcloudAliases();
-    const alias = aliases.find(item => String(item?.email || '').trim() === email);
-
-    if (!alias) {
-      await addLog(`iCloud: Auto-delete skipped. ${email} was not found in your Hide My Email alias list.`, 'warn');
-      return;
-    }
-
-    if (!alias.anonymousId) {
-      await addLog(`iCloud: Auto-delete skipped. ${email} is missing anonymousId; refresh aliases and retry manually.`, 'warn');
-      return;
-    }
-
-    await deleteIcloudAlias(alias);
-    await addLog(`iCloud: Auto-deleted used alias ${email} after successful completion.`, 'ok');
-  } catch (err) {
-    await addLog(`iCloud: Auto-delete failed for ${email}: ${getErrorMessage(err)}`, 'warn');
-  }
+  await setState({ accounts });
 }
 
 async function setManualEmailState(email) {
@@ -302,400 +232,9 @@ async function setManualEmailState(email) {
   broadcastDataUpdate({ email: trimmedEmail });
 }
 
-function getManualAliasUsageMap(state) {
-  return state?.manualAliasUsage && typeof state.manualAliasUsage === 'object'
-    ? { ...state.manualAliasUsage }
-    : {};
-}
-
-function getEffectiveUsedEmails(state) {
-  const usedEmails = new Set((state.accounts || []).map(account => String(account?.email || '').trim()).filter(Boolean));
-  const manualAliasUsage = getManualAliasUsageMap(state);
-
-  for (const [email, used] of Object.entries(manualAliasUsage)) {
-    const normalizedEmail = String(email || '').trim();
-    if (!normalizedEmail) continue;
-    if (used) usedEmails.add(normalizedEmail);
-    else usedEmails.delete(normalizedEmail);
-  }
-
-  return usedEmails;
-}
-
-async function setIcloudAliasUsedState(payload = {}) {
-  const email = String(payload.email || '').trim();
-  if (!email) {
-    throw new Error('No iCloud alias email was provided.');
-  }
-
-  const state = await getState();
-  const manualAliasUsage = getManualAliasUsageMap(state);
-  manualAliasUsage[email] = Boolean(payload.used);
-  await setState({ manualAliasUsage });
-  await addLog(`iCloud: Marked ${email} as ${payload.used ? 'used' : 'unused'}`, 'ok');
-  broadcastIcloudAliasesChanged({ reason: 'used-updated', email, used: Boolean(payload.used) });
-  return { email, used: Boolean(payload.used) };
-}
-
 function getErrorMessage(error) {
   if (typeof error === 'string') return error;
   return String(error?.message || error || 'Unknown error');
-}
-
-function isIcloudLoginRequiredError(error) {
-  const message = getErrorMessage(error).toLowerCase();
-  return message.includes('could not validate icloud session')
-    || message.includes('hide my email service was unavailable')
-    || /\bstatus (401|403|409|421)\b/.test(message);
-}
-
-function getPreferredIcloudLoginUrl(error) {
-  const message = getErrorMessage(error).toLowerCase();
-  if (message.includes('icloud.com/setup') && !message.includes('icloud.com.cn/setup')) {
-    return 'https://www.icloud.com/';
-  }
-  return 'https://www.icloud.com.cn/';
-}
-
-let lastIcloudLoginPromptAt = 0;
-
-async function openIcloudLoginPage(preferredUrl) {
-  const urlPatterns = [
-    'https://www.icloud.com/*',
-    'https://www.icloud.com.cn/*',
-  ];
-  const tabs = await chrome.tabs.query({ url: urlPatterns });
-  const preferredHost = new URL(preferredUrl).host;
-  const existing = tabs.find(tab => {
-    try {
-      return new URL(tab.url).host === preferredHost;
-    } catch {
-      return false;
-    }
-  }) || tabs[0];
-
-  if (existing?.id) {
-    await chrome.tabs.update(existing.id, { active: true });
-    if (existing.url !== preferredUrl) {
-      await chrome.tabs.update(existing.id, { url: preferredUrl });
-    }
-    return existing.id;
-  }
-
-  const created = await chrome.tabs.create({ url: preferredUrl, active: true });
-  return created.id;
-}
-
-async function promptIcloudLogin(error, actionLabel = 'iCloud action') {
-  const now = Date.now();
-  const preferredUrl = getPreferredIcloudLoginUrl(error);
-  const originalError = getErrorMessage(error);
-
-  chrome.runtime.sendMessage({
-    type: 'ICLOUD_LOGIN_REQUIRED',
-    payload: {
-      actionLabel,
-      loginUrl: preferredUrl,
-      message: 'iCloud sign-in is required. A login page has been opened for you.',
-      detail: originalError,
-    },
-  }).catch(() => {});
-
-  if (now - lastIcloudLoginPromptAt < 15000) {
-    return;
-  }
-  lastIcloudLoginPromptAt = now;
-
-  await addLog(`iCloud login required during ${actionLabel}. Opening ${new URL(preferredUrl).host}...`, 'warn');
-
-  try {
-    await openIcloudLoginPage(preferredUrl);
-  } catch (tabErr) {
-    await addLog(`iCloud: Failed to open login page automatically: ${getErrorMessage(tabErr)}`, 'warn');
-  }
-}
-
-async function withIcloudLoginHelp(actionLabel, action) {
-  try {
-    return await action();
-  } catch (err) {
-    if (isIcloudLoginRequiredError(err)) {
-      await addLog(`iCloud login check failed during ${actionLabel}: ${getErrorMessage(err)}`, 'warn');
-      await promptIcloudLogin(err, actionLabel);
-      throw new Error('Please finish signing in on the opened iCloud page, then click "I\'ve Signed In".');
-    }
-    throw err;
-  }
-}
-
-async function checkIcloudSession() {
-  return withIcloudLoginHelp('checking iCloud session', async () => {
-    const { setupUrl } = await resolveIcloudPremiumMailService();
-    await addLog(`iCloud: Session check passed via ${new URL(setupUrl).host}`, 'ok');
-    return { ok: true, setupUrl };
-  });
-}
-
-async function icloudRequest(method, url, options = {}) {
-  const { data } = options;
-  let response;
-  try {
-    response = await fetch(url, {
-      method,
-      body: data !== undefined ? JSON.stringify(data) : undefined,
-    });
-  } catch (err) {
-    throw new Error(`iCloud request failed for ${method} ${url}: ${err.message}`);
-  }
-
-  if (!response.ok) {
-    throw new Error(`iCloud request failed for ${method} ${url} with status ${response.status}`);
-  }
-
-  try {
-    return await response.json();
-  } catch (err) {
-    throw new Error(`iCloud returned invalid JSON for ${method} ${url}: ${err.message}`);
-  }
-}
-
-async function validateIcloudSession(setupUrl) {
-  const data = await icloudRequest('POST', `${setupUrl}/validate`);
-  if (!data?.webservices?.premiummailsettings?.url) {
-    throw new Error('iCloud session validated, but Hide My Email service was unavailable.');
-  }
-  return data;
-}
-
-async function resolveIcloudPremiumMailService() {
-  const errors = [];
-
-  for (const setupUrl of ICLOUD_SETUP_URLS) {
-    try {
-      const data = await validateIcloudSession(setupUrl);
-      return {
-        setupUrl,
-        serviceUrl: String(data.webservices.premiummailsettings.url).replace(/\/$/, ''),
-      };
-    } catch (err) {
-      errors.push(`${new URL(setupUrl).host}: ${err.message}`);
-    }
-  }
-
-  throw new Error(errors.length
-    ? `Could not validate iCloud session. ${errors.join(' | ')}`
-    : 'Could not validate iCloud session. Log into icloud.com.cn or icloud.com in this browser first.');
-}
-
-function getIcloudAliasLabel() {
-  const now = new Date();
-  const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  return `MultiPage ${dateStr}`;
-}
-
-function findIcloudAliasArray(node, depth = 0) {
-  if (!node || depth > 4) return null;
-  if (Array.isArray(node)) {
-    return node.some(item => typeof item === 'object') ? node : null;
-  }
-  if (typeof node !== 'object') return null;
-
-  const priorityKeys = ['hmeEmails', 'hmeEmailList', 'hmeList', 'hmes', 'aliases', 'items'];
-  for (const key of priorityKeys) {
-    if (Array.isArray(node[key])) return node[key];
-  }
-
-  for (const value of Object.values(node)) {
-    const nested = findIcloudAliasArray(value, depth + 1);
-    if (nested) return nested;
-  }
-
-  return null;
-}
-
-function normalizeIcloudAliasRecord(raw, usedEmails = new Set()) {
-  const anonymousId = String(raw?.anonymousId || raw?.id || '').trim();
-  const email = String(
-    raw?.hme
-      || raw?.email
-      || raw?.alias
-      || raw?.address
-      || raw?.metaData?.hme
-      || ''
-  ).trim();
-
-  if (!email || !email.includes('@')) return null;
-
-  const label = String(raw?.label || raw?.metaData?.label || '').trim();
-  const note = String(raw?.note || raw?.metaData?.note || '').trim();
-  const state = String(raw?.state || raw?.status || '').trim().toLowerCase();
-  const createdAt = raw?.createTimestamp
-    || raw?.createTime
-    || raw?.createdAt
-    || raw?.createdDate
-    || null;
-
-  return {
-    anonymousId,
-    email,
-    label,
-    note,
-    state,
-    active: raw?.active !== false && raw?.isActive !== false && state !== 'inactive' && state !== 'deleted',
-    used: usedEmails.has(email),
-    createdAt,
-  };
-}
-
-async function listIcloudAliases() {
-  return withIcloudLoginHelp('loading iCloud aliases', async () => {
-    const { serviceUrl } = await resolveIcloudPremiumMailService();
-    const response = await icloudRequest('GET', `${serviceUrl}/v2/hme/list`);
-    const aliases = findIcloudAliasArray(response);
-    const state = await getState();
-    const usedEmails = getEffectiveUsedEmails(state);
-
-    if (!aliases) return [];
-
-    return aliases
-      .map(alias => normalizeIcloudAliasRecord(alias, usedEmails))
-      .filter(Boolean)
-      .sort((a, b) => {
-        if (a.active !== b.active) return a.active ? -1 : 1;
-        if (a.used !== b.used) return a.used ? 1 : -1;
-        return String(a.email).localeCompare(String(b.email));
-      });
-  });
-}
-
-async function deleteIcloudAlias(email) {
-  return withIcloudLoginHelp('deleting iCloud alias', async () => {
-    const alias = typeof email === 'string'
-      ? { email: String(email).trim(), anonymousId: '' }
-      : {
-          email: String(email?.email || '').trim(),
-          anonymousId: String(email?.anonymousId || '').trim(),
-        };
-
-    if (!alias.email) {
-      throw new Error('No iCloud alias email was provided.');
-    }
-    if (!alias.anonymousId) {
-      throw new Error(`No anonymousId found for iCloud alias ${alias.email}. Refresh the alias list and retry.`);
-    }
-
-    const { serviceUrl } = await resolveIcloudPremiumMailService();
-
-    try {
-      const directDelete = await icloudRequest('POST', `${serviceUrl}/v1/hme/delete`, {
-        data: { anonymousId: alias.anonymousId },
-      });
-      if (directDelete?.success === false) {
-        throw new Error(directDelete?.error?.errorMessage || 'delete failed');
-      }
-    } catch (err) {
-      await addLog(`iCloud: Direct delete failed for ${alias.email}, trying deactivate fallback...`, 'warn');
-
-      const deactivated = await icloudRequest('POST', `${serviceUrl}/v1/hme/deactivate`, {
-        data: { anonymousId: alias.anonymousId },
-      });
-      if (deactivated?.success === false) {
-        throw new Error(deactivated?.error?.errorMessage || `Failed to deactivate ${alias.email}`);
-      }
-
-      const deleted = await icloudRequest('POST', `${serviceUrl}/v1/hme/delete`, {
-        data: { anonymousId: alias.anonymousId },
-      });
-      if (deleted?.success === false) {
-        throw new Error(deleted?.error?.errorMessage || `Failed to delete ${alias.email}`);
-      }
-    }
-
-    const state = await getState();
-    const manualAliasUsage = getManualAliasUsageMap(state);
-    if (alias.email in manualAliasUsage) {
-      delete manualAliasUsage[alias.email];
-      await setState({ manualAliasUsage });
-    }
-
-    await addLog(`iCloud: Deleted alias ${alias.email}`, 'ok');
-    broadcastIcloudAliasesChanged({ reason: 'deleted', email: alias.email });
-    return { email: alias.email };
-  });
-}
-
-async function deleteUsedIcloudAliases() {
-  const aliases = await listIcloudAliases();
-  const usedAliases = aliases.filter(alias => alias.used);
-
-  if (usedAliases.length === 0) {
-    return { deleted: [], skipped: [] };
-  }
-
-  const deleted = [];
-  const skipped = [];
-
-  for (const alias of usedAliases) {
-    try {
-      await deleteIcloudAlias(alias);
-      deleted.push(alias.email);
-    } catch (err) {
-      skipped.push({ email: alias.email, error: err.message });
-    }
-  }
-
-  return { deleted, skipped };
-}
-
-async function fetchIcloudHideMyEmail() {
-  return withIcloudLoginHelp('generating iCloud Hide My Email alias', async () => {
-    throwIfStopped();
-    await addLog('iCloud: Validating browser session for Hide My Email...');
-
-    const { serviceUrl, setupUrl } = await resolveIcloudPremiumMailService();
-    await addLog(`iCloud: Session validated via ${new URL(setupUrl).host}`, 'ok');
-
-    const existingAliasesResponse = await icloudRequest('GET', `${serviceUrl}/v2/hme/list`);
-    const state = await getState();
-    const usedEmails = getEffectiveUsedEmails(state);
-    const existingAliases = (findIcloudAliasArray(existingAliasesResponse) || [])
-      .map(alias => normalizeIcloudAliasRecord(alias, usedEmails))
-      .filter(Boolean);
-
-    const reusableAlias = existingAliases.find(alias => alias.active && !alias.used);
-    if (reusableAlias) {
-      await setEmailState(reusableAlias.email);
-      await addLog(`iCloud: Reusing unused alias ${reusableAlias.email}`, 'ok');
-      broadcastIcloudAliasesChanged({ reason: 'selected', email: reusableAlias.email });
-      return reusableAlias.email;
-    }
-
-    await addLog('iCloud: No unused active alias available, generating a new one...');
-
-    const generated = await icloudRequest('POST', `${serviceUrl}/v1/hme/generate`);
-    if (!generated?.success || !generated?.result?.hme) {
-      throw new Error(generated?.error?.errorMessage || 'iCloud Hide My Email generate failed.');
-    }
-
-    const reservePayload = {
-      hme: generated.result.hme,
-      label: getIcloudAliasLabel(),
-      note: 'Generated through MultiPage Automation',
-    };
-    const reserved = await icloudRequest('POST', `${serviceUrl}/v1/hme/reserve`, {
-      data: reservePayload,
-    });
-
-    if (!reserved?.success || !reserved?.result?.hme?.hme) {
-      throw new Error(reserved?.error?.errorMessage || 'iCloud Hide My Email reserve failed.');
-    }
-
-    const alias = reserved.result.hme.hme;
-    await setEmailState(alias);
-    await addLog(`iCloud: Reserved Hide My Email alias ${alias}`, 'ok');
-    broadcastIcloudAliasesChanged({ reason: 'created', email: alias });
-    return alias;
-  });
 }
 
 function normalizeMicrosoftManagerBaseUrl(rawValue) {
@@ -786,13 +325,42 @@ function normalizeMicrosoftManagerAccount(raw) {
   };
 }
 
+function normalizeEmailKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeMicrosoftManagerAlias(raw, parentAccount = '') {
+  const id = Number(raw?.id || 0);
+  const aliasEmail = String(raw?.aliasEmail || raw?.email || '').trim();
+  if (!aliasEmail) return null;
+
+  return {
+    id: Number.isFinite(id) ? id : 0,
+    aliasEmail,
+    account: String(raw?.account || parentAccount || '').trim(),
+    remark: String(raw?.remark || '').trim(),
+    isRegistered: Boolean(raw?.isRegistered),
+  };
+}
+
 function isMicrosoftManagerRegisteredRemark(remark) {
-  return String(remark || '').trim() === '已注册';
+  const value = String(remark || '').trim().toLowerCase();
+  if (!value) return false;
+  return value === '已注册' || value.includes('已注册') || value.includes('registered');
 }
 
 function isMicrosoftManagerBlockedRemark(remark) {
   const value = String(remark || '').trim();
-  return value === '已封禁' || value === '封禁' || /服务滥用|service abuse|abuse mode/i.test(value);
+  return value === '已封禁'
+    || value === '封禁'
+    || value === '触发手机'
+    || /服务滥用|service abuse|abuse mode|add-phone|phone challenge|phone verification/i.test(value);
+}
+
+function isMicrosoftManagerAliasRegistered(alias) {
+  if (!alias) return false;
+  if (Boolean(alias.isRegistered)) return true;
+  return isMicrosoftManagerRegisteredRemark(alias.remark);
 }
 
 function getBlockedMicrosoftEmailMap(state) {
@@ -801,13 +369,28 @@ function getBlockedMicrosoftEmailMap(state) {
     : {};
 }
 
+function isMicrosoftEmailBlocked(blockedMap, email) {
+  const exactKey = String(email || '').trim();
+  const normalizedKey = normalizeEmailKey(email);
+  if (!normalizedKey) return false;
+  return Boolean(blockedMap[normalizedKey] || blockedMap[exactKey]);
+}
+
+function isPotentialMicrosoftAliasEmail(email) {
+  const normalized = String(email || '').trim();
+  const atIndex = normalized.indexOf('@');
+  if (atIndex <= 0) return false;
+  const localPart = normalized.slice(0, atIndex);
+  return localPart.includes('+');
+}
+
 async function markMicrosoftEmailBlocked(email) {
   const normalizedEmail = String(email || '').trim();
   if (!normalizedEmail) return;
 
   const state = await getState();
   const blockedMap = getBlockedMicrosoftEmailMap(state);
-  blockedMap[normalizedEmail] = true;
+  blockedMap[normalizeEmailKey(normalizedEmail)] = true;
   await setState({ blockedMicrosoftEmails: blockedMap });
 }
 
@@ -825,12 +408,27 @@ async function listMicrosoftManagerAccounts(state, options = {}) {
     .filter(item => item.account.includes('@'));
 }
 
+async function listMicrosoftManagerAliasesByAccount(state, accountEmail) {
+  const normalizedAccountEmail = String(accountEmail || '').trim();
+  if (!normalizedAccountEmail) return [];
+
+  const payload = await requestMicrosoftManagerApi(state, '/api/open/aliases', {
+    method: 'GET',
+    query: { account: normalizedAccountEmail },
+  });
+
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return items
+    .map(item => normalizeMicrosoftManagerAlias(item, normalizedAccountEmail))
+    .filter(Boolean);
+}
+
 function findExactMicrosoftManagerAccounts(accounts, email) {
-  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const normalizedEmail = normalizeEmailKey(email);
   if (!normalizedEmail) return [];
 
   return accounts
-    .filter(item => String(item?.account || '').trim().toLowerCase() === normalizedEmail)
+    .filter(item => normalizeEmailKey(item?.account) === normalizedEmail)
     .sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0));
 }
 
@@ -883,24 +481,162 @@ async function updateMicrosoftManagerAccountRemarkByEmail(state, email, remark) 
   });
 }
 
-function pickMicrosoftManagerAccount(accounts, state) {
-  if (!accounts.length) return null;
+function isMicrosoftManagerNotFoundError(message) {
+  const normalized = String(message || '').trim().toLowerCase();
+  return normalized.includes('404') || normalized.includes('not found') || normalized.includes('不存在');
+}
 
+async function tryUpdateMicrosoftManagerAliasStatusByEmail(state, email, payload = {}) {
+  const normalizedEmail = String(email || '').trim();
+  if (!normalizedEmail) return false;
+
+  const body = {};
+  if (Object.prototype.hasOwnProperty.call(payload, 'remark')) {
+    body.remark = payload.remark;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'isRegistered')) {
+    body.isRegistered = Boolean(payload.isRegistered);
+  }
+  if (!Object.keys(body).length) {
+    throw new Error('No alias status payload provided.');
+  }
+
+  const encodedEmail = encodeURIComponent(normalizedEmail);
+  try {
+    await requestMicrosoftManagerApi(state, `/api/open/aliases/${encodedEmail}/remark`, {
+      method: 'PATCH',
+      body,
+    });
+    return true;
+  } catch (err) {
+    const message = getErrorMessage(err);
+    if (isMicrosoftManagerNotFoundError(message)) {
+      return false;
+    }
+    throw err;
+  }
+}
+
+async function updateMicrosoftManagerEmailStatusByEmail(state, email, payload = {}) {
+  const normalizedEmail = String(email || '').trim();
+  if (!normalizedEmail) {
+    throw new Error('No email was provided for Microsoft status update.');
+  }
+
+  const aliasUpdated = await tryUpdateMicrosoftManagerAliasStatusByEmail(state, normalizedEmail, payload);
+  if (aliasUpdated) {
+    return { target: 'alias' };
+  }
+
+  const remark = String(payload?.remark || '').trim();
+  if (!remark) {
+    throw new Error('No remark text was provided for Microsoft account status update.');
+  }
+
+  await updateMicrosoftManagerAccountRemarkByEmail(state, normalizedEmail, remark);
+  return { target: 'account' };
+}
+
+async function listMicrosoftManagerEmailCandidates(state, accounts) {
   const blockedMap = getBlockedMicrosoftEmailMap(state);
-  const availableAccounts = accounts.filter((account) => {
-    if (isMicrosoftManagerRegisteredRemark(account?.remark)) return false;
-    if (isMicrosoftManagerBlockedRemark(account?.remark)) return false;
-    return !blockedMap[String(account?.account || '').trim()];
-  });
-  if (!availableAccounts.length) return null;
+  const useAliases = Boolean(state.microsoftManagerUseAliases);
+  const seenEmails = new Set();
+  const stats = {
+    scannedAccounts: 0,
+    skippedPrimary: 0,
+    scannedAliases: 0,
+    skippedAliases: 0,
+  };
 
-  const usedEmails = new Set(
-    (state.accounts || [])
-      .map(account => String(account?.email || '').trim())
-      .filter(Boolean)
-  );
+  const normalizeCandidate = (candidate) => {
+    const email = String(candidate?.email || '').trim();
+    if (!email) return null;
+    const key = normalizeEmailKey(email);
+    if (!key || seenEmails.has(key)) return null;
+    seenEmails.add(key);
+    return {
+      ...candidate,
+      email,
+      emailKey: key,
+    };
+  };
 
-  return availableAccounts.find(account => !usedEmails.has(account.account)) || availableAccounts[0];
+  for (const account of accounts) {
+    stats.scannedAccounts += 1;
+    const primaryEmail = String(account?.account || '').trim();
+    if (!primaryEmail) continue;
+
+    const primaryBlocked = isMicrosoftManagerRegisteredRemark(account?.remark)
+      || isMicrosoftManagerBlockedRemark(account?.remark)
+      || isMicrosoftEmailBlocked(blockedMap, primaryEmail);
+
+    if (!primaryBlocked) {
+      const normalizedPrimary = normalizeCandidate({
+        email: primaryEmail,
+        source: 'account',
+        accountId: Number(account?.id || 0),
+        primaryEmail,
+      });
+      if (normalizedPrimary) {
+        return {
+          selected: normalizedPrimary,
+          stats,
+        };
+      }
+    } else {
+      stats.skippedPrimary += 1;
+    }
+
+    if (!useAliases) continue;
+
+    let aliases = [];
+    try {
+      aliases = await listMicrosoftManagerAliasesByAccount(state, primaryEmail);
+    } catch (err) {
+      await addLog(`Microsoft Manager: Failed to load aliases for ${primaryEmail}, skip aliases for this account: ${getErrorMessage(err)}`, 'warn');
+      continue;
+    }
+
+    for (const alias of aliases) {
+      stats.scannedAliases += 1;
+      const aliasEmail = String(alias?.aliasEmail || '').trim();
+      if (!aliasEmail) {
+        stats.skippedAliases += 1;
+        continue;
+      }
+      if (isMicrosoftManagerAliasRegistered(alias)) {
+        stats.skippedAliases += 1;
+        continue;
+      }
+      if (isMicrosoftManagerBlockedRemark(alias?.remark)) {
+        stats.skippedAliases += 1;
+        continue;
+      }
+      if (isMicrosoftEmailBlocked(blockedMap, aliasEmail)) {
+        stats.skippedAliases += 1;
+        continue;
+      }
+
+      const normalizedAlias = normalizeCandidate({
+        email: aliasEmail,
+        source: 'alias',
+        aliasId: Number(alias?.id || 0),
+        accountId: Number(account?.id || 0),
+        primaryEmail,
+      });
+      if (normalizedAlias) {
+        return {
+          selected: normalizedAlias,
+          stats,
+        };
+      }
+    }
+  }
+
+  return {
+    selected: null,
+    stats,
+  };
 }
 
 async function fetchMicrosoftManagerEmail(options = {}) {
@@ -913,23 +649,28 @@ async function fetchMicrosoftManagerEmail(options = {}) {
     throw new Error('No account found in Microsoft Account Manager.');
   }
 
-  const stateBlockedMap = getBlockedMicrosoftEmailMap(state);
-  const blockedByRemarkCount = accounts.filter(account => isMicrosoftManagerRegisteredRemark(account?.remark) || isMicrosoftManagerBlockedRemark(account?.remark)).length;
-  const blockedByRuntimeCount = accounts.filter(account => stateBlockedMap[String(account?.account || '').trim()]).length;
-  const selected = pickMicrosoftManagerAccount(accounts, state);
-  if (!selected?.account) {
-    if (blockedByRemarkCount > 0 && blockedByRemarkCount === accounts.length) {
-      throw new Error('No available account found. All Microsoft accounts are marked as 已注册/已封禁.');
+  const { selected, stats } = await listMicrosoftManagerEmailCandidates(state, accounts);
+  await addLog(
+    `Microsoft Manager: Candidate scan -> accounts ${stats.scannedAccounts}, skipped primary ${stats.skippedPrimary}, aliases ${stats.scannedAliases}, skipped aliases ${stats.skippedAliases}, alias mode ${state.microsoftManagerUseAliases ? 'on' : 'off'}`
+  );
+
+  if (!selected?.email) {
+    if (Boolean(state.microsoftManagerUseAliases)) {
+      throw new Error('No available email found after sequential check: all primary/alias emails are marked as 已注册/已封禁 or blocked.');
     }
-    if (blockedByRuntimeCount > 0 && blockedByRuntimeCount === accounts.length) {
-      throw new Error('No available account found. All Microsoft accounts were blocked in this run.');
-    }
-    throw new Error('No valid account email found in Microsoft Account Manager.');
+    throw new Error('No available account found. All Microsoft accounts are marked as 已注册/已封禁 or blocked in this run.');
   }
 
-  await setEmailState(selected.account);
-  await addLog(`Microsoft Manager: Selected account ${selected.account}`, 'ok');
-  return selected.account;
+  await setEmailState(selected.email);
+  if (selected.source === 'alias') {
+    await addLog(
+      `Microsoft Manager: Selected alias ${selected.email} (primary ${selected.primaryEmail || 'unknown'})`,
+      'ok'
+    );
+  } else {
+    await addLog(`Microsoft Manager: Selected account ${selected.email}`, 'ok');
+  }
+  return selected.email;
 }
 
 function stripHtmlTags(value) {
@@ -1076,6 +817,15 @@ function isMicrosoftServiceAbuseError(error) {
     || message.includes('服务滥用');
 }
 
+function isMicrosoftPhoneChallengeError(error) {
+  const message = getErrorMessage(error).toLowerCase();
+  return message.includes('add-phone')
+    || message.includes('/add-phone')
+    || message.includes('phone challenge')
+    || message.includes('phone verification')
+    || message.includes('触发手机');
+}
+
 async function reopenSignupForReplacementEmail(state) {
   if (!state.oauthUrl) {
     throw new Error('No OAuth URL available to restart signup with replacement email.');
@@ -1107,17 +857,37 @@ async function handleMicrosoftServiceAbuseDuringStep4(state, context = {}) {
   await addLog(`Step 4: Detected blocked account (${currentEmail}) with AADSTS70000.`, 'warn');
   await markMicrosoftEmailBlocked(currentEmail);
 
+  const aliasEmail = isPotentialMicrosoftAliasEmail(currentEmail);
+
   if (deleteBlocked) {
-    try {
-      await deleteMicrosoftManagerAccountByEmail(state, currentEmail);
-      await addLog(`Step 4: Blocked email ${currentEmail} has been deleted from Microsoft Manager.`, 'ok');
-    } catch (err) {
-      await addLog(`Step 4: Failed to delete blocked email ${currentEmail}: ${getErrorMessage(err)}`, 'warn');
+    if (aliasEmail) {
+      try {
+        const result = await updateMicrosoftManagerEmailStatusByEmail(state, currentEmail, {
+          remark: '已封禁',
+          isRegistered: false,
+        });
+        await addLog(
+          `Step 4: Current email is an alias and cannot be deleted directly, marked as 已封禁 (${result.target}).`,
+          'warn'
+        );
+      } catch (err) {
+        await addLog(`Step 4: Failed to mark blocked alias ${currentEmail}: ${getErrorMessage(err)}`, 'warn');
+      }
+    } else {
+      try {
+        await deleteMicrosoftManagerAccountByEmail(state, currentEmail);
+        await addLog(`Step 4: Blocked email ${currentEmail} has been deleted from Microsoft Manager.`, 'ok');
+      } catch (err) {
+        await addLog(`Step 4: Failed to delete blocked email ${currentEmail}: ${getErrorMessage(err)}`, 'warn');
+      }
     }
   } else {
     try {
-      await updateMicrosoftManagerAccountRemarkByEmail(state, currentEmail, '已封禁');
-      await addLog(`Step 4: Blocked email ${currentEmail} marked as 已封禁.`, 'ok');
+      const result = await updateMicrosoftManagerEmailStatusByEmail(state, currentEmail, {
+        remark: '已封禁',
+        isRegistered: false,
+      });
+      await addLog(`Step 4: Blocked email ${currentEmail} marked as 已封禁 (${result.target}).`, 'ok');
     } catch (err) {
       await addLog(`Step 4: Failed to mark blocked email ${currentEmail}: ${getErrorMessage(err)}`, 'warn');
     }
@@ -1134,6 +904,43 @@ async function handleMicrosoftServiceAbuseDuringStep4(state, context = {}) {
 
   await addLog(
     `Step 4: Switched to replacement email ${replacementEmail} (${context.round || 1}/${context.maxRounds || 1}).`,
+    'ok'
+  );
+
+  const refreshed = await getState();
+  await reopenSignupForReplacementEmail(refreshed);
+}
+
+async function handleMicrosoftPhoneChallengeDuringStep4(state, context = {}) {
+  const currentEmail = String(state.email || '').trim();
+  if (!currentEmail) {
+    throw new Error('Current email is empty when handling phone-challenge fallback.');
+  }
+
+  await addLog(`Step 4: Detected add-phone challenge for ${currentEmail}. Marking as 触发手机 and switching email...`, 'warn');
+  await markMicrosoftEmailBlocked(currentEmail);
+
+  try {
+    const result = await updateMicrosoftManagerEmailStatusByEmail(state, currentEmail, {
+      remark: '触发手机',
+      isRegistered: false,
+    });
+    await addLog(`Step 4: ${currentEmail} marked as 触发手机 (${result.target}).`, 'ok');
+  } catch (err) {
+    await addLog(`Step 4: Failed to mark ${currentEmail} as 触发手机: ${getErrorMessage(err)}`, 'warn');
+  }
+
+  const previousEmail = currentEmail;
+  const replacementEmail = await fetchConfiguredEmail({ generateNew: true });
+  if (!replacementEmail) {
+    throw new Error('No replacement email available after add-phone fallback.');
+  }
+  if (String(replacementEmail).trim() === previousEmail) {
+    throw new Error('Replacement email is the same as add-phone email. Please prepare more accounts/aliases in Microsoft Manager.');
+  }
+
+  await addLog(
+    `Step 4: Switched to replacement email ${replacementEmail} after add-phone (${context.round || 1}/${context.maxRounds || 1}).`,
     'ok'
   );
 
@@ -1320,7 +1127,7 @@ async function reuseOrCreateTab(source, url, options = {}) {
           target: { tabId },
           files: options.inject,
         });
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 250));
       }
 
       return tabId;
@@ -1365,7 +1172,7 @@ async function reuseOrCreateTab(source, url, options = {}) {
     }
 
     // Wait a bit for content script to inject and send READY
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 250));
 
     return tabId;
   }
@@ -1511,7 +1318,7 @@ async function clickWithDebugger(tabId, rect) {
     throw new Error('No auth tab found for debugger click.');
   }
   if (!rect || !Number.isFinite(rect.centerX) || !Number.isFinite(rect.centerY)) {
-    throw new Error('Step 8 debugger fallback needs a valid button position.');
+    throw new Error('Step 6 debugger fallback needs a valid button position.');
   }
 
   const target = { tabId };
@@ -1519,7 +1326,7 @@ async function clickWithDebugger(tabId, rect) {
     await chrome.debugger.attach(target, '1.3');
   } catch (err) {
     throw new Error(
-      `Debugger attach failed during step 8 fallback: ${err.message}. ` +
+      `Debugger attach failed during step 6 fallback: ${err.message}. ` +
       'If DevTools is open on the auth tab, close it and retry.'
     );
   }
@@ -1702,16 +1509,14 @@ async function handleMessage(message, sender) {
         updates.sub2apiAdminApiKey = message.payload.sub2apiAdminApiKey;
         updates.sub2apiRuntimeCredential = '';
       }
-      if (message.payload.autoDeleteUsedIcloudAlias !== undefined) updates.autoDeleteUsedIcloudAlias = Boolean(message.payload.autoDeleteUsedIcloudAlias);
       if (message.payload.deleteAbusedMicrosoftAccount !== undefined) updates.deleteAbusedMicrosoftAccount = Boolean(message.payload.deleteAbusedMicrosoftAccount);
       if (message.payload.customPassword !== undefined) updates.customPassword = message.payload.customPassword;
       if (message.payload.mailProvider !== undefined) updates.mailProvider = normalizeMailProvider(message.payload.mailProvider);
-      if (message.payload.inbucketHost !== undefined) updates.inbucketHost = message.payload.inbucketHost;
-      if (message.payload.inbucketMailbox !== undefined) updates.inbucketMailbox = message.payload.inbucketMailbox;
       if (message.payload.microsoftManagerUrl !== undefined) updates.microsoftManagerUrl = message.payload.microsoftManagerUrl;
       if (message.payload.microsoftManagerToken !== undefined) updates.microsoftManagerToken = message.payload.microsoftManagerToken;
       if (message.payload.microsoftManagerMode !== undefined) updates.microsoftManagerMode = normalizeMicrosoftManagerMode(message.payload.microsoftManagerMode);
       if (message.payload.microsoftManagerKeyword !== undefined) updates.microsoftManagerKeyword = message.payload.microsoftManagerKeyword;
+      if (message.payload.microsoftManagerUseAliases !== undefined) updates.microsoftManagerUseAliases = Boolean(message.payload.microsoftManagerUseAliases);
       await setState(updates);
       await persistSettingsIfNeeded(updates);
       return { ok: true };
@@ -1727,35 +1532,6 @@ async function handleMessage(message, sender) {
       clearStopRequest();
       const email = await fetchConfiguredEmail(message.payload || {});
       return { ok: true, email };
-    }
-
-    case 'CHECK_ICLOUD_SESSION': {
-      clearStopRequest();
-      return await checkIcloudSession();
-    }
-
-    case 'LIST_ICLOUD_ALIASES': {
-      clearStopRequest();
-      const aliases = await listIcloudAliases();
-      return { ok: true, aliases };
-    }
-
-    case 'SET_ICLOUD_ALIAS_USED_STATE': {
-      clearStopRequest();
-      const result = await setIcloudAliasUsedState(message.payload || {});
-      return { ok: true, ...result };
-    }
-
-    case 'DELETE_ICLOUD_ALIAS': {
-      clearStopRequest();
-      const result = await deleteIcloudAlias(message.payload);
-      return { ok: true, ...result };
-    }
-
-    case 'DELETE_USED_ICLOUD_ALIASES': {
-      clearStopRequest();
-      const result = await deleteUsedIcloudAliases();
-      return { ok: true, ...result };
     }
 
     case 'STOP_FLOW': {
@@ -1787,15 +1563,34 @@ async function handleStepData(step, payload) {
     case 4:
       if (payload.emailTimestamp) await setState({ lastEmailTimestamp: payload.emailTimestamp });
       break;
-    case 8:
+    case 6:
       if (payload.localhostUrl) {
         await setState({ localhostUrl: payload.localhostUrl });
         broadcastDataUpdate({ localhostUrl: payload.localhostUrl });
       }
       break;
-    case 9:
+    case 7:
       await recordCompletedAccount();
+      await markMicrosoftManagerEmailRegisteredAfterImport();
       break;
+  }
+}
+
+async function markMicrosoftManagerEmailRegisteredAfterImport() {
+  const state = await getState();
+  if (normalizeMailProvider(state.mailProvider) !== 'microsoft-manager') return;
+
+  const email = String(state.email || '').trim();
+  if (!email) return;
+
+  try {
+    const result = await updateMicrosoftManagerEmailStatusByEmail(state, email, {
+      remark: '已注册',
+      isRegistered: true,
+    });
+    await addLog(`Microsoft Manager: Updated status for ${email} -> 已注册 (${result.target})`, 'ok');
+  } catch (err) {
+    await addLog(`Microsoft Manager: Failed to update status for ${email}: ${getErrorMessage(err)}`, 'warn');
   }
 }
 
@@ -1903,9 +1698,8 @@ async function executeStep(step) {
       case 3: await executeStep3(state); break;
       case 4: await executeStep4(state); break;
       case 5: await executeStep5(state); break;
-      case 8: await executeStep8(state); break;
-      case 9: await executeStep9(state); break;
-      case 10: await executeStep10(state); break;
+      case 6: await executeStep6(state); break;
+      case 7: await executeStep7(state); break;
       default:
         throw new Error(`Unknown step: ${step}`);
     }
@@ -1933,7 +1727,7 @@ async function executeStepAndWait(step, delayAfter = 2000) {
   await promise;
   // Extra delay for page transitions / DOM updates
   if (delayAfter > 0) {
-    await sleepWithStop(delayAfter + Math.floor(Math.random() * 1200));
+    await sleepWithStop(delayAfter + Math.floor(Math.random() * 450));
   }
 }
 
@@ -1962,16 +1756,13 @@ async function syncAutoRunState(overrides = {}) {
 
 function getAutoStepDelay(step) {
   const delayMap = {
-    1: 2000,
-    2: 2000,
-    3: 3000,
-    4: 2000,
-    5: 3000,
-    6: 200,
-    7: 200,
-    8: 2000,
-    9: 1000,
-    10: 800,
+    1: 1200,
+    2: 1100,
+    3: 1500,
+    4: 1100,
+    5: 1500,
+    6: 900,
+    7: 700,
   };
   return delayMap[step] || 0;
 }
@@ -2002,7 +1793,7 @@ async function waitForSignupSurface(payload, timeout = 20000) {
       return response;
     } catch (err) {
       lastError = err;
-      await sleepWithStop(250);
+      await sleepWithStop(160);
     }
   }
 
@@ -2036,12 +1827,6 @@ function getAutoResumeStep(state) {
   }
 
   return null;
-}
-
-function toAutoRunDisplayStep(step) {
-  const normalized = Number(step);
-  if (!Number.isFinite(normalized)) return step;
-  return AUTO_RUN_DISPLAY_STEP_MAP[normalized] || normalized;
 }
 
 async function ensureAutoRunEmailReady(run, totalRuns) {
@@ -2085,7 +1870,7 @@ async function executeAutoRunSteps(run, totalRuns, options = {}) {
   if (!startStep) return;
 
   if (resumeFromCurrentState) {
-    await addLog(`=== Run ${run}/${totalRuns} — Resuming from step ${toAutoRunDisplayStep(startStep)} ===`, 'warn');
+    await addLog(`=== Run ${run}/${totalRuns} — Resuming from step ${startStep} ===`, 'warn');
   }
 
   if (startStep <= 2) {
@@ -2164,12 +1949,11 @@ async function autoRunLoop(totalRuns, options = {}) {
         sub2apiBaseUrl: prevState.sub2apiBaseUrl,
         sub2apiAdminApiKey: prevState.sub2apiAdminApiKey,
         mailProvider: prevState.mailProvider,
-        inbucketHost: prevState.inbucketHost,
-        inbucketMailbox: prevState.inbucketMailbox,
         microsoftManagerUrl: prevState.microsoftManagerUrl,
         microsoftManagerToken: prevState.microsoftManagerToken,
         microsoftManagerMode: prevState.microsoftManagerMode,
         microsoftManagerKeyword: prevState.microsoftManagerKeyword,
+        microsoftManagerUseAliases: Boolean(prevState.microsoftManagerUseAliases),
         autoRunning: true,
         autoRunCurrentRun: run,
         autoRunTotalRuns: totalRuns,
@@ -2179,7 +1963,7 @@ async function autoRunLoop(totalRuns, options = {}) {
       await setState(keepSettings);
       // Tell side panel to reset all UI
       chrome.runtime.sendMessage({ type: 'AUTO_RUN_RESET' }).catch(() => {});
-      await sleepWithStop(500);
+      await sleepWithStop(220);
     }
 
     try {
@@ -2489,20 +2273,6 @@ function getMailConfig(state) {
   };
 }
 
-function normalizeInbucketOrigin(rawValue) {
-  const value = (rawValue || '').trim();
-  if (!value) return '';
-
-  const candidate = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//.test(value) ? value : `https://${value}`;
-
-  try {
-    const parsed = new URL(candidate);
-    return parsed.origin;
-  } catch {
-    return '';
-  }
-}
-
 function normalizeCpaManagementApiRoot(rawValue) {
   const value = String(rawValue || '').trim();
   if (!value) return '';
@@ -2649,7 +2419,7 @@ async function waitForCpaAuthStatusReady(state, oauthState, options = {}) {
     throwIfStopped();
 
     if (attempt === 1 || attempt % 5 === 0) {
-      await addLog(`Step 9: Checking CPA Auth status... (${attempt}/${maxAttempts})`);
+    await addLog(`Step 7: Checking CPA Auth status... (${attempt}/${maxAttempts})`);
     }
 
     const payload = await requestCpaManagementApi(state, 'get-auth-status', {
@@ -2866,7 +2636,7 @@ async function requestSub2apiAdminApi(state, path, options = {}) {
 function parseOAuthCallbackParams(callbackUrl) {
   const value = String(callbackUrl || '').trim();
   if (!value) {
-    throw new Error('No callback URL. Complete step 8 first.');
+    throw new Error('No callback URL. Complete step 6 first.');
   }
 
   let parsed;
@@ -3059,7 +2829,10 @@ async function executeStep4(state) {
       });
       return;
     } catch (err) {
-      if (!isMicrosoftServiceAbuseError(err)) {
+      const abuseError = isMicrosoftServiceAbuseError(err);
+      const phoneChallengeError = isMicrosoftPhoneChallengeError(err);
+
+      if (!abuseError && !phoneChallengeError) {
         throw err;
       }
 
@@ -3067,10 +2840,17 @@ async function executeStep4(state) {
         throw new Error(`Step 4: ${getErrorMessage(err)}. Reached maximum blocked-account retry rounds (${maxSwitchRounds}).`);
       }
 
-      await handleMicrosoftServiceAbuseDuringStep4(current, {
-        round,
-        maxRounds: maxSwitchRounds,
-      });
+      if (phoneChallengeError) {
+        await handleMicrosoftPhoneChallengeDuringStep4(current, {
+          round,
+          maxRounds: maxSwitchRounds,
+        });
+      } else {
+        await handleMicrosoftServiceAbuseDuringStep4(current, {
+          round,
+          maxRounds: maxSwitchRounds,
+        });
+      }
     }
   }
 }
@@ -3094,7 +2874,7 @@ async function executeStep5(state) {
 }
 
 // ============================================================
-// Step 8: Complete OAuth (auto click + localhost listener)
+// Step 6: Complete OAuth (auto click + localhost listener)
 // ============================================================
 
 let webNavListener = null;
@@ -3172,7 +2952,7 @@ async function findExistingLocalCallbackUrl(state = null) {
   return '';
 }
 
-async function finalizeStep8WithCallbackUrl(callbackUrl) {
+async function finalizeStep6WithCallbackUrl(callbackUrl) {
   await setState({ localhostUrl: callbackUrl });
 
   let callbackError = '';
@@ -3190,23 +2970,23 @@ async function finalizeStep8WithCallbackUrl(callbackUrl) {
     );
   }
 
-  await addLog(`Step 8: Captured localhost URL: ${callbackUrl}`, 'ok');
-  await completeBackgroundStep(8, { localhostUrl: callbackUrl });
+  await addLog(`Step 6: Captured localhost URL: ${callbackUrl}`, 'ok');
+  await completeBackgroundStep(6, { localhostUrl: callbackUrl });
 }
 
-async function executeStep8(state) {
+async function executeStep6(state) {
   if (!state.oauthUrl) {
     throw new Error('No OAuth URL. Complete step 1 first.');
   }
 
   const existingCallbackUrl = await findExistingLocalCallbackUrl(state);
   if (existingCallbackUrl) {
-    await addLog('Step 8: Existing localhost callback already detected. Reusing it.', 'warn');
-    await finalizeStep8WithCallbackUrl(existingCallbackUrl);
+    await addLog('Step 6: Existing localhost callback already detected. Reusing it.', 'warn');
+    await finalizeStep6WithCallbackUrl(existingCallbackUrl);
     return;
   }
 
-  await addLog('Step 8: Setting up localhost redirect listener...');
+  await addLog('Step 6: Setting up localhost redirect listener...');
 
   // Register webNavigation listener (scoped to this step)
   return new Promise((resolve, reject) => {
@@ -3232,14 +3012,14 @@ async function executeStep8(state) {
           if (callbackUrl) {
             resolved = true;
             cleanupListener();
-            await finalizeStep8WithCallbackUrl(callbackUrl);
+            await finalizeStep6WithCallbackUrl(callbackUrl);
             resolve();
             return;
           }
         } catch {}
 
         cleanupListener();
-        reject(new Error('Localhost redirect not captured after 120s. Step 8 click may have been blocked.'));
+        reject(new Error('Localhost redirect not captured after 120s. Step 6 click may have been blocked.'));
       })();
     }, 120000);
 
@@ -3256,7 +3036,7 @@ async function executeStep8(state) {
 
       (async () => {
         try {
-          await finalizeStep8WithCallbackUrl(details.url);
+          await finalizeStep6WithCallbackUrl(details.url);
           resolve();
         } catch (err) {
           reject(err);
@@ -3266,23 +3046,23 @@ async function executeStep8(state) {
 
     chrome.webNavigation.onBeforeNavigate.addListener(webNavListener);
 
-    // Step 8 runs on the consent screen ("使用 ChatGPT 登录到 Codex").
+    // Step 6 runs on the consent screen ("使用 ChatGPT 登录到 Codex").
     // The new flow may briefly stay on "/about-you" first.
     (async () => {
       try {
         let signupTabId = await getTabId('signup-page');
         if (signupTabId) {
           await chrome.tabs.update(signupTabId, { active: true });
-          await addLog('Step 8: Switched to auth page. Preparing continue click...');
+          await addLog('Step 6: Switched to auth page. Preparing continue click...');
         } else {
           signupTabId = await reuseOrCreateTab('signup-page', state.oauthUrl);
-          await addLog('Step 8: Auth tab reopened. Preparing continue click...');
+          await addLog('Step 6: Auth tab reopened. Preparing continue click...');
         }
 
-        async function requestStep8Click(payload = {}) {
+        async function requestStep6Click(payload = {}) {
           try {
             return await sendToContentScript('signup-page', {
-              type: 'STEP8_FIND_AND_CLICK',
+              type: 'STEP6_FIND_AND_CLICK',
               source: 'background',
               payload,
             });
@@ -3293,37 +3073,37 @@ async function executeStep8(state) {
               throw sendErr;
             }
 
-            await addLog('Step 8: Auth page helper disconnected, reinjecting and retrying...', 'warn');
+            await addLog('Step 6: Auth page helper disconnected, reinjecting and retrying...', 'warn');
             await chrome.scripting.executeScript({
               target: { tabId: signupTabId },
               files: ['content/utils.js', 'content/signup-page.js'],
             });
-            await new Promise((r) => setTimeout(r, 350));
+            await new Promise((r) => setTimeout(r, 180));
             return chrome.tabs.sendMessage(signupTabId, {
-              type: 'STEP8_FIND_AND_CLICK',
+              type: 'STEP6_FIND_AND_CLICK',
               source: 'background',
               payload,
             });
           }
         }
 
-        let clickResult = await requestStep8Click({ dryRun: false });
+        let clickResult = await requestStep6Click({ dryRun: false });
 
         if (clickResult?.error) {
           throw new Error(clickResult.error);
         }
 
         if (!clickResult?.isConsentPage) {
-          await addLog('Step 8: Current page is not consent yet (likely /about-you). Continue clicked once, waiting for consent page...', 'warn');
+          await addLog('Step 6: Current page is not consent yet (likely /about-you). Continue clicked once, waiting for consent page...', 'warn');
 
           await waitForSignupSurface({
-            step: 8,
+            step: 6,
             selectors: getOauthConsentSurfaceSelectors(),
             timeout: 20000,
           }, 20000);
 
           if (!resolved) {
-            clickResult = await requestStep8Click({ dryRun: false });
+            clickResult = await requestStep6Click({ dryRun: false });
             if (clickResult?.error) {
               throw new Error(clickResult.error);
             }
@@ -3332,13 +3112,13 @@ async function executeStep8(state) {
 
         if (!resolved) {
           if (clickResult?.directClicked) {
-            await addLog('Step 8: Continue button clicked. Waiting for localhost redirect...', 'ok');
-            await sleepWithStop(1400);
+            await addLog('Step 6: Continue button clicked. Waiting for localhost redirect...', 'ok');
+            await sleepWithStop(700);
           }
 
           if (!resolved) {
             await clickWithDebugger(signupTabId, clickResult?.rect);
-            await addLog('Step 8: Debugger click dispatched as fallback, waiting for redirect...');
+            await addLog('Step 6: Debugger click dispatched as fallback, waiting for redirect...');
           }
         }
       } catch (err) {
@@ -3348,7 +3128,7 @@ async function executeStep8(state) {
 
         const message = getErrorMessage(err);
         await addLog(
-          `Step 8: Auto click was not completed (${message}). Please click consent manually; still waiting for localhost redirect...`,
+          `Step 6: Auto click was not completed (${message}). Please click consent manually; still waiting for localhost redirect...`,
           'warn'
         );
       }
@@ -3357,28 +3137,28 @@ async function executeStep8(state) {
 }
 
 // ============================================================
-// Step 9: Callback verify/import (CPA API / CPA panel / Sub2API)
+// Step 7: Callback verify/import (CPA API / CPA panel / Sub2API)
 // ============================================================
 
-async function executeStep9(state) {
+async function executeStep7(state) {
   if (isSub2apiOauthProvider(state)) {
-    await executeStep9WithSub2api(state);
+    await executeStep7WithSub2api(state);
     return;
   }
 
   if (shouldUseCpaManagementApi(state)) {
-    await executeStep9WithCpaApi(state);
+    await executeStep7WithCpaApi(state);
     return;
   }
 
   if (!state.localhostUrl) {
-    throw new Error('No localhost URL. Complete step 8 first.');
+    throw new Error('No localhost URL. Complete step 6 first.');
   }
   if (!state.vpsUrl) {
     throw new Error('CPA Auth URL not set. Please enter the CPA Auth URL in the side panel.');
   }
 
-  await addLog('Step 9: Opening CPA Auth panel...');
+  await addLog('Step 7: Opening CPA Auth panel...');
 
   let tabId = await getTabId('vps-panel');
   const alive = tabId && await isTabAlive('vps-panel');
@@ -3405,21 +3185,21 @@ async function executeStep9(state) {
     target: { tabId },
     files: ['content/utils.js', 'content/vps-panel.js'],
   });
-  await new Promise(r => setTimeout(r, 1000));
+  await new Promise(r => setTimeout(r, 450));
 
   // Send command directly — bypass queue/ready mechanism
-  await addLog(`Step 9: Filling callback URL...`);
+  await addLog(`Step 7: Filling callback URL...`);
   await chrome.tabs.sendMessage(tabId, {
     type: 'EXECUTE_STEP',
-    step: 9,
+    step: 7,
     source: 'background',
     payload: { localhostUrl: state.localhostUrl },
   });
 }
 
-async function executeStep9WithCpaApi(state) {
+async function executeStep7WithCpaApi(state) {
   if (!state.localhostUrl) {
-    throw new Error('No localhost URL. Complete step 8 first.');
+    throw new Error('No localhost URL. Complete step 6 first.');
   }
 
   const callback = parseOAuthCallbackParams(state.localhostUrl);
@@ -3434,11 +3214,11 @@ async function executeStep9WithCpaApi(state) {
   }
 
   if (callback.state && callback.state !== oauthState) {
-    await addLog(`Step 9: Callback state (${callback.state}) differs from stored CPA state (${oauthState}). Using callback state.`, 'warn');
+    await addLog(`Step 7: Callback state (${callback.state}) differs from stored CPA state (${oauthState}). Using callback state.`, 'warn');
     oauthState = callback.state;
   }
 
-  await addLog('Step 9: Forwarding OAuth callback to CPA Management API...');
+  await addLog('Step 7: Forwarding OAuth callback to CPA Management API...');
   try {
     await requestCpaManagementApi(state, 'oauth-callback', {
       method: 'POST',
@@ -3453,29 +3233,29 @@ async function executeStep9WithCpaApi(state) {
   } catch (err) {
     const message = getErrorMessage(err);
     if (/already|duplicate|exists|processed|handled/i.test(message)) {
-      await addLog(`Step 9: Callback already submitted (${message}). Continue polling status...`, 'warn');
+      await addLog(`Step 7: Callback already submitted (${message}). Continue polling status...`, 'warn');
     } else {
       throw err;
     }
   }
 
-  await addLog('Step 9: Confirming OAuth completion via CPA Management API...');
+  await addLog('Step 7: Confirming OAuth completion via CPA Management API...');
   await waitForCpaAuthStatusReady(state, oauthState, {
     maxAttempts: 40,
     intervalMs: 2000,
   });
 
   await setState({ cpaAuthState: null });
-  await addLog('Step 9: CPA import/authentication completed.', 'ok');
+  await addLog('Step 7: CPA import/authentication completed.', 'ok');
 
-  await completeBackgroundStep(9, {
+  await completeBackgroundStep(7, {
     cpaAuthState: oauthState,
   });
 }
 
-async function executeStep9WithSub2api(state) {
+async function executeStep7WithSub2api(state) {
   if (!state.localhostUrl) {
-    throw new Error('No localhost URL. Complete step 8 first.');
+    throw new Error('No localhost URL. Complete step 6 first.');
   }
 
   const sessionId = String(state.sub2apiSessionId || '').trim();
@@ -3489,7 +3269,7 @@ async function executeStep9WithSub2api(state) {
     authCredential = await resolveSub2apiCredentialFromDashboard(state);
   }
 
-  await addLog('Step 9: Importing account to Sub2API...');
+  await addLog('Step 7: Importing account to Sub2API...');
   let created;
   try {
     created = await requestSub2apiAdminApi(state, 'admin/openai/create-from-oauth', {
@@ -3510,7 +3290,7 @@ async function executeStep9WithSub2api(state) {
       throw err;
     }
 
-    await addLog('Step 9: Sub2API auth failed, trying dashboard session token fallback...', 'warn');
+    await addLog('Step 7: Sub2API auth failed, trying dashboard session token fallback...', 'warn');
     const fallbackCredential = await resolveSub2apiCredentialFromDashboard({
       ...state,
       sub2apiRuntimeCredential: '',
@@ -3533,58 +3313,14 @@ async function executeStep9WithSub2api(state) {
   const accountId = Number(created?.id || 0);
   const accountName = String(created?.name || state.email || '').trim();
   if (accountId > 0) {
-    await addLog(`Step 9: Sub2API account created #${accountId}${accountName ? ` (${accountName})` : ''}`, 'ok');
+    await addLog(`Step 7: Sub2API account created #${accountId}${accountName ? ` (${accountName})` : ''}`, 'ok');
   } else {
-    await addLog(`Step 9: Sub2API import completed${accountName ? ` (${accountName})` : ''}`, 'ok');
+    await addLog(`Step 7: Sub2API import completed${accountName ? ` (${accountName})` : ''}`, 'ok');
   }
 
-  await completeBackgroundStep(9, {
+  await completeBackgroundStep(7, {
     sub2apiAccountId: accountId || null,
     sub2apiAccountName: accountName || null,
-  });
-}
-
-// ============================================================
-// Step 10: Cleanup Source Email (iCloud alias / Microsoft account)
-// ============================================================
-
-async function executeStep10(state) {
-  const email = String(state.email || '').trim();
-  if (!email) {
-    throw new Error('No email. Complete step 3 first.');
-  }
-
-  await addLog('Step 10: Cleaning up source email...');
-
-  if (!state.autoDeleteUsedIcloudAlias) {
-    await addLog('Step 10: Cleanup is disabled. Enable Cleanup if you want to auto-delete the source email.', 'warn');
-    let remarkUpdated = false;
-    const provider = normalizeMailProvider(state.mailProvider);
-    if (provider === 'microsoft-manager') {
-      try {
-        await updateMicrosoftManagerAccountRemarkByEmail(state, email, '已注册');
-        remarkUpdated = true;
-        await addLog(`Microsoft Manager: Updated remark for ${email} -> 已注册`, 'ok');
-      } catch (err) {
-        await addLog(`Microsoft Manager: Failed to update remark for ${email}: ${getErrorMessage(err)}`, 'warn');
-      }
-    }
-
-    await completeBackgroundStep(10, {
-      skipped: true,
-      reason: 'cleanup_disabled',
-      deleted: false,
-      remarkUpdated,
-      remark: remarkUpdated ? '已注册' : null,
-      email,
-    });
-    return;
-  }
-
-  await maybeAutoDeleteCompletedIcloudAlias();
-  await completeBackgroundStep(10, {
-    deleted: true,
-    email,
   });
 }
 

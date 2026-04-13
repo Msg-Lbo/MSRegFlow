@@ -1,4 +1,4 @@
-// content/vps-panel.js — Content script for CPA Auth panel (steps 1, 9)
+// content/vps-panel.js — Content script for CPA Auth panel (steps 1, 7)
 // Injected on: CPA Auth panel (user-configured URL)
 //
 // Actual DOM structure (after login click):
@@ -48,7 +48,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleStep(step, payload) {
   switch (step) {
     case 1: return await step1_getOAuthLink();
-    case 9: return await step9_vpsVerify(payload);
+    case 7: return await step7_vpsVerify(payload);
     default:
       throw new Error(`vps-panel.js does not handle step ${step}`);
   }
@@ -84,7 +84,7 @@ async function step1_getOAuthLink() {
   if (loginBtn.disabled) {
     log('Step 1: Login button is disabled (already loading), waiting for auth URL...');
   } else {
-    await humanPause(500, 1400);
+    await humanPause(250, 700);
     simulateClick(loginBtn);
     log('Step 1: Clicked login button, waiting for auth URL...');
   }
@@ -110,23 +110,23 @@ async function step1_getOAuthLink() {
 }
 
 // ============================================================
-// Step 9: CPA Auth Verify — paste localhost URL and submit
+// Step 7: CPA Auth Verify — paste localhost URL and submit
 // ============================================================
 
-async function step9_vpsVerify(payload) {
+async function step7_vpsVerify(payload) {
   // Get localhostUrl from payload (passed directly by background) or fallback to state
   let localhostUrl = payload?.localhostUrl;
   if (!localhostUrl) {
-    log('Step 9: localhostUrl not in payload, fetching from state...');
+    log('Step 7: localhostUrl not in payload, fetching from state...');
     const state = await chrome.runtime.sendMessage({ type: 'GET_STATE' });
     localhostUrl = state.localhostUrl;
   }
   if (!localhostUrl) {
-    throw new Error('No localhost URL found. Complete step 8 first.');
+    throw new Error('No localhost URL found. Complete step 6 first.');
   }
-  log(`Step 9: Got localhostUrl: ${localhostUrl.slice(0, 60)}...`);
+  log(`Step 7: Got localhostUrl: ${localhostUrl.slice(0, 60)}...`);
 
-  log('Step 9: Looking for callback URL input...');
+  log('Step 7: Looking for callback URL input...');
 
   // Find the callback URL input
   // Actual DOM: <input class="input" placeholder="http://localhost:1455/auth/callback?code=...&state=...">
@@ -141,9 +141,9 @@ async function step9_vpsVerify(payload) {
     }
   }
 
-  await humanPause(600, 1500);
+  await humanPause(260, 760);
   fillInput(urlInput, localhostUrl);
-  log(`Step 9: Filled callback URL: ${localhostUrl.slice(0, 80)}...`);
+  log(`Step 7: Filled callback URL: ${localhostUrl.slice(0, 80)}...`);
 
   // Find and click "提交回调 URL" button
   let submitBtn = null;
@@ -161,24 +161,24 @@ async function step9_vpsVerify(payload) {
     }
   }
 
-  await humanPause(450, 1200);
+  await humanPause(220, 650);
   simulateClick(submitBtn);
-  log('Step 9: Clicked "提交回调 URL", waiting for authentication result...');
+  log('Step 7: Clicked "提交回调 URL", waiting for authentication result...');
 
   // Wait for "认证成功！" status badge to appear
   try {
     await waitForElementByText('.status-badge, [class*="status"]', /认证成功/, 30000);
-    log('Step 9: Authentication successful!', 'ok');
+    log('Step 7: Authentication successful!', 'ok');
   } catch {
     // Check if there's an error message instead
     const statusEl = document.querySelector('.status-badge, [class*="status"]');
     const statusText = statusEl ? statusEl.textContent : 'unknown';
     if (/成功|success/i.test(statusText)) {
-      log('Step 9: Authentication successful!', 'ok');
+      log('Step 7: Authentication successful!', 'ok');
     } else {
-      log(`Step 9: Status after submit: "${statusText}". May still be processing.`, 'warn');
+      log(`Step 7: Status after submit: "${statusText}". May still be processing.`, 'warn');
     }
   }
 
-  reportComplete(9);
+  reportComplete(7);
 }

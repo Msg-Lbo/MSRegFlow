@@ -82,17 +82,6 @@
         </select>
       </div>
       <div class="data-row">
-        <span class="data-label" data-i18n="labelAlias">Alias</span>
-        <span class="data-value" data-i18n="icloudAliasName">iCloud Hide My Email</span>
-      </div>
-      <div class="data-row">
-        <span class="data-label" data-i18n="labelCleanup">Cleanup</span>
-        <label class="option-toggle" for="checkbox-auto-delete-icloud">
-          <input type="checkbox" id="checkbox-auto-delete-icloud" />
-          <span data-i18n="cleanupAutoDelete">Delete iCloud alias after successful use</span>
-        </label>
-      </div>
-      <div class="data-row">
         <span class="data-label" data-i18n="labelBlockedAccountPolicy">封号处理</span>
         <label class="option-toggle" for="checkbox-delete-blocked-account">
           <input type="checkbox" id="checkbox-delete-blocked-account" />
@@ -104,14 +93,6 @@
         <select id="select-mail-provider" class="data-select">
           <option value="microsoft-manager" data-i18n="mailProviderMicrosoftManager">Microsoft Account Manager API</option>
         </select>
-      </div>
-      <div class="data-row" id="row-inbucket-host" style="display:none;">
-        <span class="data-label" data-i18n="labelInbucket">Inbucket</span>
-        <input type="text" id="input-inbucket-host" class="data-input" placeholder="your-inbucket-host or https://your-inbucket-host" data-i18n-placeholder="placeholderInbucketHost" />
-      </div>
-      <div class="data-row" id="row-inbucket-mailbox" style="display:none;">
-        <span class="data-label" data-i18n="labelMailbox">Mailbox</span>
-        <input type="text" id="input-inbucket-mailbox" class="data-input" placeholder="e.g. zju2001" data-i18n-placeholder="placeholderInbucketMailbox" />
       </div>
       <div class="data-row" id="row-microsoft-manager-url" style="display:none;">
         <span class="data-label" data-i18n="labelMicrosoftManager">MSMgr</span>
@@ -132,10 +113,17 @@
         <span class="data-label" data-i18n="labelKeyword">Filter</span>
         <input type="text" id="input-microsoft-manager-keyword" class="data-input" placeholder="optional keyword" data-i18n-placeholder="placeholderMicrosoftManagerKeyword" />
       </div>
+      <div class="data-row" id="row-microsoft-manager-alias-toggle" style="display:none;">
+        <span class="data-label" data-i18n="labelAliasPool">别名池</span>
+        <label class="option-toggle" for="checkbox-microsoft-manager-use-aliases">
+          <input type="checkbox" id="checkbox-microsoft-manager-use-aliases" />
+          <span data-i18n="microsoftManagerUseAliases">勾选后自动取号使用“主邮箱+别名邮箱”；不勾选仅使用主邮箱</span>
+        </label>
+      </div>
       <div class="data-row">
         <span class="data-label" data-i18n="labelEmail">Email</span>
         <div class="data-inline">
-          <input type="text" id="input-email" class="data-input" placeholder="Use Auto to generate an iCloud alias, or paste manually" />
+          <input type="text" id="input-email" class="data-input" placeholder="Use Auto to fetch a Microsoft account, or paste manually" />
           <button id="btn-fetch-email" class="btn btn-outline btn-sm" type="button" data-i18n="btnAuto">Auto</button>
           <button id="btn-copy-email" class="btn btn-outline btn-sm" type="button" data-i18n="btnCopy">Copy</button>
         </div>
@@ -177,36 +165,15 @@
     </div>
     <div id="auto-continue-bar" class="auto-continue-bar" style="display:none;">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      <span id="auto-hint" class="auto-hint">Use Auto to generate an iCloud alias, or paste manually, then continue</span>
+      <span id="auto-hint" class="auto-hint">Use Auto to fetch a Microsoft account email, or paste manually, then continue</span>
       <button id="btn-auto-continue" class="btn btn-primary btn-sm" data-i18n="btnContinue">Continue</button>
-    </div>
-  </section>
-
-  <section id="icloud-section">
-    <div class="log-header">
-      <span class="section-label" data-i18n="sectionIcloud">iCloud</span>
-      <div class="icloud-actions">
-        <button id="btn-icloud-refresh" class="btn btn-ghost btn-xs" type="button" data-i18n="btnRefresh">Refresh</button>
-        <button id="btn-icloud-delete-used" class="btn btn-outline btn-xs" type="button" data-i18n="btnDeleteUsed">Delete Used</button>
-      </div>
-    </div>
-    <div class="icloud-card">
-      <div id="icloud-summary" class="icloud-summary">Load your Hide My Email aliases to manage them here.</div>
-      <div id="icloud-login-help" class="icloud-login-help" style="display:none;">
-        <div class="icloud-login-help-main">
-          <div id="icloud-login-help-title" class="icloud-login-help-title">iCloud sign-in required</div>
-          <div id="icloud-login-help-text" class="icloud-login-help-text">A new iCloud page has been opened. Complete sign-in there, then come back here.</div>
-        </div>
-        <button id="btn-icloud-login-done" class="btn btn-primary btn-xs" type="button" data-i18n="btnIcloudLoginDone">I've Signed In</button>
-      </div>
-      <div id="icloud-list" class="icloud-list"></div>
     </div>
   </section>
 
   <section id="steps-section">
     <div class="steps-header">
       <span class="section-label" data-i18n="sectionWorkflow">Workflow</span>
-      <span id="steps-progress" class="steps-progress">0 / 8</span>
+      <span id="steps-progress" class="steps-progress">0 / 7</span>
     </div>
     <div class="steps-list">
       <div class="step-row" data-step="1">
@@ -239,23 +206,17 @@
         <button class="step-skip-btn btn btn-ghost btn-xs" data-step="5" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
         <span class="step-status" data-step="5"></span>
       </div>
-      <div class="step-row" data-step="8">
-        <div class="step-indicator" data-step="8"><span class="step-num">6</span></div>
-        <button class="step-btn" data-step="8" data-i18n="step8">OAuth Auto Confirm</button>
-        <button class="step-skip-btn btn btn-ghost btn-xs" data-step="8" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
-        <span class="step-status" data-step="8"></span>
+      <div class="step-row" data-step="6">
+        <div class="step-indicator" data-step="6"><span class="step-num">6</span></div>
+        <button class="step-btn" data-step="6" data-i18n="step6">OAuth Auto Confirm</button>
+        <button class="step-skip-btn btn btn-ghost btn-xs" data-step="6" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
+        <span class="step-status" data-step="6"></span>
       </div>
-      <div class="step-row" data-step="9">
-        <div class="step-indicator" data-step="9"><span class="step-num">7</span></div>
-        <button class="step-btn" data-step="9" data-i18n="step9">Callback Verify / Import</button>
-        <button class="step-skip-btn btn btn-ghost btn-xs" data-step="9" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
-        <span class="step-status" data-step="9"></span>
-      </div>
-      <div class="step-row" data-step="10">
-        <div class="step-indicator" data-step="10"><span class="step-num">8</span></div>
-        <button class="step-btn" data-step="10" data-i18n="step10">Cleanup Source Email</button>
-        <button class="step-skip-btn btn btn-ghost btn-xs" data-step="10" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
-        <span class="step-status" data-step="10"></span>
+      <div class="step-row" data-step="7">
+        <div class="step-indicator" data-step="7"><span class="step-num">7</span></div>
+        <button class="step-btn" data-step="7" data-i18n="step7">Callback Verify / Import</button>
+        <button class="step-skip-btn btn btn-ghost btn-xs" data-step="7" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
+        <span class="step-status" data-step="7"></span>
       </div>
     </div>
   </section>

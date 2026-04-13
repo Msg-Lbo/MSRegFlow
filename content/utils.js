@@ -4,8 +4,6 @@ const SCRIPT_SOURCE = (() => {
   if (window.__MULTIPAGE_SOURCE) return window.__MULTIPAGE_SOURCE;
   const url = location.href;
   if (url.includes('auth0.openai.com') || url.includes('auth.openai.com') || url.includes('accounts.openai.com')) return 'signup-page';
-  if (url.includes('mail.qq.com')) return 'qq-mail';
-  if (url.includes('mail.163.com')) return 'mail-163';
   if (url.includes('chatgpt.com')) return 'chatgpt';
   // VPS panel — detected dynamically since URL is configurable
   return 'vps-panel';
@@ -13,6 +11,7 @@ const SCRIPT_SOURCE = (() => {
 
 const LOG_PREFIX = `[MultiPage:${SCRIPT_SOURCE}]`;
 const STOP_ERROR_MESSAGE = 'Flow stopped by user.';
+const HUMAN_PAUSE_SCALE = 0.6;
 let flowStopped = false;
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -366,13 +365,13 @@ function sleep(ms) {
 }
 
 async function humanPause(min = 250, max = 850) {
-  const duration = Math.floor(Math.random() * (max - min + 1)) + min;
+  const scaledMin = Math.max(80, Math.round(min * HUMAN_PAUSE_SCALE));
+  const scaledMax = Math.max(scaledMin, Math.round(max * HUMAN_PAUSE_SCALE));
+  const duration = Math.floor(Math.random() * (scaledMax - scaledMin + 1)) + scaledMin;
   await sleep(duration);
 }
 
 // Auto-report ready on load
-// Skip ready signal from child iframes of mail pages to avoid overwriting the top frame's registration
-const _isMailChildFrame = (SCRIPT_SOURCE === 'qq-mail' || SCRIPT_SOURCE === 'mail-163' || SCRIPT_SOURCE === 'inbucket-mail') && window !== window.top;
-if (!_isMailChildFrame) {
+if (window === window.top) {
   reportReady();
 }

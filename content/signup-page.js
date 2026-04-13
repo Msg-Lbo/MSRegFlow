@@ -5,19 +5,19 @@ console.log('[MultiPage:signup-page] Content script loaded on', location.href);
 
 // Listen for commands from Background
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'EXECUTE_STEP' || message.type === 'FILL_CODE' || message.type === 'STEP8_FIND_AND_CLICK' || message.type === 'WAIT_FOR_SURFACE' || message.type === 'RESEND_VERIFICATION_CODE' || message.type === 'RECOVER_PASSWORD_TIMEOUT') {
+  if (message.type === 'EXECUTE_STEP' || message.type === 'FILL_CODE' || message.type === 'STEP6_FIND_AND_CLICK' || message.type === 'WAIT_FOR_SURFACE' || message.type === 'RESEND_VERIFICATION_CODE' || message.type === 'RECOVER_PASSWORD_TIMEOUT') {
     resetStopState();
     handleCommand(message).then((result) => {
       sendResponse({ ok: true, ...(result || {}) });
     }).catch(err => {
       if (isStopError(err)) {
-        log(`Step ${message.step || 8}: Stopped by user.`, 'warn');
+          log(`Step ${message.step || 6}: Stopped by user.`, 'warn');
         sendResponse({ stopped: true, error: err.message });
         return;
       }
 
-      if (message.type === 'STEP8_FIND_AND_CLICK') {
-        log(`Step 8: ${err.message}`, 'error');
+      if (message.type === 'STEP6_FIND_AND_CLICK') {
+        log(`Step 6: ${err.message}`, 'error');
         sendResponse({ error: err.message });
         return;
       }
@@ -48,14 +48,14 @@ async function handleCommand(message) {
         case 2: return await step2_clickRegister();
         case 3: return await step3_fillEmailPassword(message.payload);
         case 5: return await step5_fillNameBirthday(message.payload);
-        case 8: return await step8_findAndClick(message.payload);
+        case 6: return await step6_findAndClick(message.payload);
         default: throw new Error(`signup-page.js does not handle step ${message.step}`);
       }
     case 'FILL_CODE':
       // Step 4 = signup verification code
       return await fillVerificationCode(message.step, message.payload);
-    case 'STEP8_FIND_AND_CLICK':
-      return await step8_findAndClick(message.payload);
+    case 'STEP6_FIND_AND_CLICK':
+      return await step6_findAndClick(message.payload);
     case 'WAIT_FOR_SURFACE':
       return await waitForSurfacePayload(message.payload);
     case 'RESEND_VERIFICATION_CODE':
@@ -75,7 +75,7 @@ async function recoverPasswordTimeoutFromBackground(payload = {}) {
 
 async function ensureAuthSurfaceReady(step, timeout = 15000) {
   await waitForDocumentReady('interactive', timeout);
-  await sleep(250);
+  await sleep(140);
   log(`Step ${step}: Page ready state is ${document.readyState}`);
 }
 
@@ -328,13 +328,13 @@ async function startPasswordTimeoutRecoveryWatcher(password) {
       return;
     }
 
-    await sleep(1200);
+    await sleep(800);
   }
 }
 
 async function autoRecoverPasswordTimeoutOnPageLoad() {
   if (!isCreateAccountPasswordPage()) return;
-  await sleep(600);
+  await sleep(380);
   await recoverPasswordAfterTimeout({ context: 'page-load' });
 }
 
@@ -377,7 +377,7 @@ async function step3_fillEmailPassword(payload) {
       await humanPause(400, 1100);
       simulateClick(submitBtn);
       log('Step 3: Submitted email, waiting for password field...');
-      await sleep(2000);
+      await sleep(1200);
     }
 
     try {
@@ -397,7 +397,7 @@ async function step3_fillEmailPassword(payload) {
   reportComplete(3, { email });
 
   // Submit the form (page will navigate away after this)
-  await sleep(500);
+  await sleep(250);
   const submitBtn = document.querySelector('button[type="submit"]')
     || await waitForElementByText('button', /continue|sign\s*up|submit|注册|创建|create/i, 5000).catch(() => null);
 
@@ -450,7 +450,7 @@ async function fillVerificationCode(step, payload) {
   reportComplete(step);
 
   // Submit
-  await sleep(500);
+  await sleep(250);
   const submitBtn = document.querySelector('button[type="submit"]')
     || await waitForElementByText('button', /verify|confirm|submit|continue|确认|验证/i, 5000).catch(() => null);
 
@@ -470,7 +470,7 @@ async function resendVerificationCode(step, payload = {}) {
 
   await humanPause(400, 900);
   simulateClick(resendBtn);
-  await sleep(1200);
+  await sleep(700);
 
   const resentAt = Date.now();
   log(`Step ${step}: Verification code resend triggered`);
@@ -496,7 +496,7 @@ async function findVerificationResendButton(timeout = 10000) {
 }
 
 // ============================================================
-// Step 8: Find "继续" on OAuth consent page for debugger click
+// Step 6: Find "继续" on OAuth consent page for debugger click
 // ============================================================
 // After login + verification, page shows:
 // "使用 ChatGPT 登录到 Codex" with a "继续" submit button.
@@ -512,10 +512,10 @@ function isAboutYouPage() {
     || Boolean(document.querySelector('form[action="/about-you"]'));
 }
 
-async function step8_findAndClick(options = {}) {
+async function step6_findAndClick(options = {}) {
   const { dryRun = false } = options;
-  await ensureAuthSurfaceReady(8);
-  log('Step 8: Looking for OAuth consent "继续" button...');
+  await ensureAuthSurfaceReady(6);
+  log('Step 6: Looking for OAuth consent "继续" button...');
 
   const continueBtn = await findContinueButton();
   await waitForButtonEnabled(continueBtn);
@@ -523,7 +523,7 @@ async function step8_findAndClick(options = {}) {
   await humanPause(350, 900);
   continueBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
   continueBtn.focus();
-  await sleep(250);
+  await sleep(120);
 
   const rect = getSerializableRect(continueBtn);
   const pageUrl = location.href;
@@ -531,7 +531,7 @@ async function step8_findAndClick(options = {}) {
   const aboutYouPage = isAboutYouPage();
 
   if (dryRun) {
-    log('Step 8: Continue button probe completed (dry-run).');
+    log('Step 6: Continue button probe completed (dry-run).');
     return {
       rect,
       buttonText: (continueBtn.textContent || '').trim(),
@@ -544,7 +544,7 @@ async function step8_findAndClick(options = {}) {
 
   await humanPause(350, 900);
   simulateClick(continueBtn);
-  log('Step 8: Continue button clicked directly in page script.');
+  log('Step 6: Continue button clicked directly in page script.');
 
   let redirected = false;
   try {
@@ -554,7 +554,7 @@ async function step8_findAndClick(options = {}) {
     redirected = false;
   }
 
-  log('Step 8: Found "继续" button and prepared debugger click coordinates.');
+  log('Step 6: Found "继续" button and prepared debugger click coordinates.');
   return {
     rect,
     buttonText: (continueBtn.textContent || '').trim(),
@@ -741,7 +741,7 @@ async function step5_fillNameBirthday(payload) {
   }
 
   // Click "完成帐户创建" button
-  await sleep(500);
+  await sleep(250);
   const completeBtn = document.querySelector('button[type="submit"]')
     || await waitForElementByText('button', /完成|create|continue|finish|done|agree/i, 5000).catch(() => null);
 

@@ -1,7 +1,7 @@
 # MSRegFlow
 
 `MSRegFlow` 是一个面向 **Microsoft Account Manager API** 的 Chrome 扩展，
-用于自动执行 Codex / OpenAI OAuth 注册流程（含收码、授权、回调导入与清理）。
+用于自动执行 Codex / OpenAI OAuth 注册流程（含收码、授权、回调导入）。
 
 当前版本只保留一个验证码来源：
 
@@ -22,11 +22,10 @@
 ## 功能概览
 
 - 支持 `CPA Auth` 与 `Sub2API` 两种 OAuth 目标
-- 自动执行 10 步流程（获取链接、注册、收码、授权、回调导入、清理）
+- 自动执行 7 步流程（获取链接、注册、收码、授权、回调导入）
 - 验证码读取与账号自动获取统一走 `Microsoft Account Manager API`
 - 支持自动模式（`Auto`）与单步模式
 - 支持失败后 `Skip`、中断后继续
-- 支持成功后自动删除来源账号（Step 10）
 - 内置运行统计：计时、平均用时、成功率
 - 支持中英文界面切换（默认中文）
 
@@ -72,7 +71,7 @@ http(s)://<your-host>/management.html#/oauth
 
 可选填写 `CPA Key`（Management Key）：
 
-- 已填写：Step 1/Step 9 走管理 API，不再依赖页面按钮点击
+- 已填写：Step 1/Step 7 走管理 API，不再依赖页面按钮点击
 - 未填写：保留旧版页面点击模式（兼容原流程）
 - 注意：这里必须填写**明文** Management Key，不要填配置文件里自动加密后的 `$2...` 串
 
@@ -84,7 +83,7 @@ CPA API 模式会调用：
 对应流程：
 
 - Step 1：获取 OAuth 链接
-- Step 9：验证 callback 并完成导入
+- Step 7：验证 callback 并完成导入
 
 #### Sub2API 模式
 
@@ -113,6 +112,9 @@ CPA API 模式会调用：
 - `Token`：`MAIL_API_TOKEN`
 - `Mode`：`graph` 或 `imap`
 - `Filter`：可选，按关键词筛选账号
+- `别名池`：
+  - 勾选：Auto 取号时使用“主邮箱 + 别名邮箱”
+  - 不勾选：Auto 只使用主邮箱
 - `封号处理`：
   - 勾选：Step 4 遇到 `AADSTS70000` 时自动删除被封邮箱并换号重试
   - 不勾选：Step 4 遇到 `AADSTS70000` 时跳过该邮箱（标记 `已封禁`）并换号重试
@@ -128,15 +130,7 @@ CPA API 模式会调用：
 - 留空：自动生成强密码
 - 手动填写：使用自定义密码
 
-### 5) Cleanup
-
-- 开启后，Step 10 会在成功导入后自动删除当前来源账号
-- 删除失败不会阻断整轮流程完成标记
-- 未开启时，Step 10 会自动给当前账号打备注：`已注册`
-
----
-
-## 工作流（面板显示 8 步）
+## 工作流（面板显示 7 步）
 
 1. `Get OAuth Link`
 2. `Open Signup`
@@ -145,9 +139,7 @@ CPA API 模式会调用：
 5. `Fill Name / Birthday`
 6. `OAuth Auto Confirm`
 7. `Callback Verify / Import`
-8. `Cleanup Source Email`
-
-说明：面板流程固定为 8 步（1~8），其中 OAuth 确认、导入、清理分别对应第 6/7/8 步。
+说明：面板流程固定为 7 步（1~7），其中 OAuth 确认、导入分别对应第 6/7 步。
 
 ---
 

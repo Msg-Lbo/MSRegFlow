@@ -8,26 +8,8 @@ const STATUS_ICONS = {
   failed: '\u2717',     // ✗
   stopped: '\u25A0',    // ■
 };
-const WORKFLOW_STEPS = [1, 2, 3, 4, 5, 8, 9, 10];
+const WORKFLOW_STEPS = [1, 2, 3, 4, 5, 6, 7];
 const TOTAL_STEPS = WORKFLOW_STEPS.length;
-const PREVIOUS_WORKFLOW_STEP = WORKFLOW_STEPS.reduce((acc, step, index) => {
-  acc[step] = index > 0 ? WORKFLOW_STEPS[index - 1] : null;
-  return acc;
-}, {});
-const DISPLAY_STEP_INDEX = WORKFLOW_STEPS.reduce((acc, step, index) => {
-  acc[step] = index + 1;
-  return acc;
-}, {});
-
-function toDisplayStep(step) {
-  const value = Number(step);
-  if (!Number.isFinite(value)) return step;
-  return DISPLAY_STEP_INDEX[value] || value;
-}
-
-function replaceStepNumberForDisplay(text) {
-  return String(text || '').replace(/\bStep\s+(\d+)\b/g, (_, step) => `Step ${toDisplayStep(step)}`);
-}
 
 const logArea = document.getElementById('log-area');
 const displayOauthUrl = document.getElementById('display-oauth-url');
@@ -40,18 +22,7 @@ const displayVersion = document.getElementById('display-version');
 const displayElapsed = document.getElementById('display-elapsed');
 const displayAverageDuration = document.getElementById('display-average-duration');
 const displaySuccessRate = document.getElementById('display-success-rate');
-const icloudSection = document.getElementById('icloud-section');
-const icloudSummary = document.getElementById('icloud-summary');
-const icloudList = document.getElementById('icloud-list');
-const icloudLoginHelp = document.getElementById('icloud-login-help');
-const icloudLoginHelpTitle = document.getElementById('icloud-login-help-title');
-const icloudLoginHelpText = document.getElementById('icloud-login-help-text');
-const btnIcloudLoginDone = document.getElementById('btn-icloud-login-done');
-const btnIcloudRefresh = document.getElementById('btn-icloud-refresh');
-const btnIcloudDeleteUsed = document.getElementById('btn-icloud-delete-used');
-const checkboxAutoDeleteIcloud = document.getElementById('checkbox-auto-delete-icloud');
 const checkboxDeleteBlockedAccount = document.getElementById('checkbox-delete-blocked-account');
-const aliasSourceValue = document.querySelector('.data-row .data-value[data-i18n="icloudAliasName"]');
 const rowMailProvider = document.getElementById('row-mail-provider');
 const inputEmail = document.getElementById('input-email');
 const inputPassword = document.getElementById('input-password');
@@ -78,10 +49,6 @@ const inputSub2apiBaseUrl = document.getElementById('input-sub2api-base-url');
 const rowSub2apiApiKey = document.getElementById('row-sub2api-api-key');
 const inputSub2apiApiKey = document.getElementById('input-sub2api-api-key');
 const selectMailProvider = document.getElementById('select-mail-provider');
-const rowInbucketHost = document.getElementById('row-inbucket-host');
-const inputInbucketHost = document.getElementById('input-inbucket-host');
-const rowInbucketMailbox = document.getElementById('row-inbucket-mailbox');
-const inputInbucketMailbox = document.getElementById('input-inbucket-mailbox');
 const rowMicrosoftManagerUrl = document.getElementById('row-microsoft-manager-url');
 const inputMicrosoftManagerUrl = document.getElementById('input-microsoft-manager-url');
 const rowMicrosoftManagerToken = document.getElementById('row-microsoft-manager-token');
@@ -90,12 +57,12 @@ const rowMicrosoftManagerMode = document.getElementById('row-microsoft-manager-m
 const selectMicrosoftManagerMode = document.getElementById('select-microsoft-manager-mode');
 const rowMicrosoftManagerKeyword = document.getElementById('row-microsoft-manager-keyword');
 const inputMicrosoftManagerKeyword = document.getElementById('input-microsoft-manager-keyword');
+const rowMicrosoftManagerAliasToggle = document.getElementById('row-microsoft-manager-alias-toggle');
+const checkboxMicrosoftManagerUseAliases = document.getElementById('checkbox-microsoft-manager-use-aliases');
 const inputRunCount = document.getElementById('input-run-count');
 const autoHint = document.getElementById('auto-hint');
-let icloudRefreshQueued = false;
 let currentLanguage = localStorage.getItem('multipage-language') || 'zh-CN';
 let lastKnownState = null;
-let lastRenderedIcloudAliases = [];
 let runMetricsTicker = null;
 let activeRunStartMs = 0;
 let activeRunKey = '';
@@ -137,7 +104,7 @@ const I18N = {
   'zh-CN': {
     titleRunCount: '运行次数',
     titleAutoRun: '自动执行全部步骤',
-    titleFetchEmail: '自动获取 iCloud 别名',
+    titleFetchEmail: '自动获取 Microsoft 账号',
     titleFetchEmailMicrosoftManager: '自动获取 Microsoft 账号',
     titleStop: '停止当前流程',
     titleReset: '重置全部步骤',
@@ -148,16 +115,13 @@ const I18N = {
     labelCpaAuth: 'CPA Auth',
     labelOauthTarget: 'OAuth',
     labelLanguage: '语言',
-    labelAlias: '别名',
-    labelCleanup: '清理',
     labelBlockedAccountPolicy: '封号处理',
     labelVerify: '验证',
-    labelInbucket: 'Inbucket',
-    labelMailbox: '邮箱名',
     labelMicrosoftManager: 'MS 管理',
     labelToken: '令牌',
     labelMode: '模式',
     labelKeyword: '筛选',
+    labelAliasPool: '别名池',
     labelCpaManagementKey: 'CPA Key',
     labelSub2api: 'Sub2API',
     labelSub2apiApiKey: 'API Key',
@@ -168,13 +132,9 @@ const I18N = {
     labelElapsed: '计时',
     labelAverageDuration: '平均用时',
     labelSuccessRate: '成功率',
-    icloudAliasName: 'iCloud Hide My Email',
     microsoftManagerEmailName: 'Microsoft 账号',
-    cleanupAutoDelete: '成功使用后自动删除来源邮箱',
     blockedAccountPolicy: '邮箱被封 (AADSTS70000) 时删除账号；未勾选则跳过并换号',
-    mailProvider163: '163 邮箱 (mail.163.com)',
-    mailProviderQq: 'QQ 邮箱 (wx.mail.qq.com)',
-    mailProviderInbucket: 'Inbucket（自定义主机）',
+    microsoftManagerUseAliases: '勾选后自动取号使用“主邮箱+别名邮箱”；不勾选仅使用主邮箱',
     mailProviderMicrosoftManager: 'Microsoft Account Manager API',
     microsoftManagerModeGraph: 'Graph',
     microsoftManagerModeImap: 'IMAP',
@@ -184,12 +144,9 @@ const I18N = {
     placeholderCpaManagementKey: '填写明文 Management Key（不要填 $2... 加密串）',
     placeholderSub2apiBaseUrl: 'https://你的-sub2api域名',
     placeholderSub2apiApiKey: '可留空；或填写 x-api-key / Bearer token',
-    placeholderInbucketHost: '你的 inbucket 主机或 https://你的主机',
-    placeholderInbucketMailbox: '例如 zju2001',
     placeholderMicrosoftManagerUrl: 'https://你的-manager域名',
     placeholderMicrosoftManagerToken: '填写 MAIL_API_TOKEN',
     placeholderMicrosoftManagerKeyword: '可选关键词，用于筛选账号',
-    placeholderEmail: '使用 Auto 生成 iCloud 别名，或手动粘贴',
     placeholderEmailMicrosoftManager: '使用 Auto 获取 Microsoft 账号，或手动粘贴',
     placeholderPassword: '留空则自动生成',
     waiting: '等待中...',
@@ -198,17 +155,10 @@ const I18N = {
     btnContinue: '继续',
     btnCopy: '复制',
     btnPaste: '粘贴',
-    btnRefresh: '刷新',
-    btnDeleteUsed: '删除已用',
-    btnDelete: '删除',
-    btnMarkUsed: '标记已用',
-    btnMarkUnused: '标记未用',
-    btnIcloudLoginDone: '我已登录',
     btnClear: '清空',
     btnSkip: '跳过',
     btnShow: '显示',
     btnHide: '隐藏',
-    sectionIcloud: 'iCloud',
     sectionWorkflow: '流程',
     sectionConsole: '控制台',
     step1: '获取 OAuth 链接',
@@ -216,9 +166,8 @@ const I18N = {
     step3: '填写邮箱 / 密码',
     step4: '获取注册验证码',
     step5: '填写姓名 / 生日',
-    step8: 'OAuth 自动确认',
-    step9: '回调验证 / 导入',
-    step10: '清理来源邮箱',
+    step6: 'OAuth 自动确认',
+    step7: '回调验证 / 导入',
     statusRunning: ({ step }) => `第 ${step} 步执行中...`,
     statusFailed: ({ step }) => `第 ${step} 步失败`,
     statusStopped: ({ step }) => `第 ${step} 步已停止`,
@@ -226,30 +175,10 @@ const I18N = {
     statusSkipped: ({ step }) => `第 ${step} 步已跳过`,
     statusDone: ({ step }) => `第 ${step} 步完成`,
     statusReady: '就绪',
-    autoHintEmail: '使用 Auto 生成 iCloud 别名，或手动粘贴后继续',
     autoHintEmailMicrosoftManager: '使用 Auto 获取 Microsoft 账号邮箱，或手动粘贴后继续',
     autoHintError: '自动运行被错误中断。修复问题或跳过失败步骤后继续',
     fetchedEmail: ({ email }) => `已获取 ${email}`,
     autoFetchFailed: ({ message }) => `自动获取失败：${message}`,
-    icloudSummaryInitial: '加载你的 Hide My Email 别名以便在这里管理。',
-    icloudEmpty: '未找到 iCloud Hide My Email 别名。',
-    icloudAliasesLoaded: ({ count, usedCount }) => `已加载 ${count} 个别名，其中 ${usedCount} 个已在插件中标记为 used。`,
-    icloudLoading: '正在加载 iCloud 别名...',
-    icloudLoadFailed: ({ message }) => `iCloud 加载失败：${message}`,
-    deletingAlias: ({ email }) => `正在删除 ${email}...`,
-    deletedAlias: ({ email }) => `已删除 ${email}`,
-    deleteFailed: ({ message }) => `删除失败：${message}`,
-    updatingAliasUsed: ({ email, used }) => `正在将 ${email} 标记为${used ? '已用' : '未用'}...`,
-    updatedAliasUsed: ({ email, used }) => `${email} 已标记为${used ? '已用' : '未用'}`,
-    updateAliasUsedFailed: ({ message }) => `标记失败：${message}`,
-    deletingUsedAliases: '正在删除已使用的 iCloud 别名...',
-    deletedUsedAliases: ({ deleted, skipped }) => skipped ? `已删除 ${deleted} 个已用别名，跳过 ${skipped} 个。` : `已删除 ${deleted} 个已用别名。`,
-    bulkDeleteFailed: ({ message }) => `批量删除失败：${message}`,
-    icloudLoginRequiredToast: '需要登录 iCloud，我已经为你打开登录页。',
-    icloudLoginHelpTitle: '需要登录 iCloud',
-    icloudLoginHelpText: ({ host }) => `我已经为你打开 ${host}。请在那个页面完成登录，然后回到这里点击“我已登录”。`,
-    icloudSessionReady: 'iCloud 会话已恢复，别名列表已刷新。',
-    icloudStillNotSignedIn: ({ message }) => `看起来还没有登录完成：${message}`,
     pleaseEnterEmailFirst: '请先粘贴邮箱地址或点击 Auto',
     skipFailed: ({ message }) => `跳过失败：${message}`,
     stepSkippedToast: ({ step }) => `第 ${step} 步已跳过`,
@@ -277,7 +206,7 @@ const I18N = {
   'en-US': {
     titleRunCount: 'Number of runs',
     titleAutoRun: 'Run all steps automatically',
-    titleFetchEmail: 'Fetch an iCloud alias automatically',
+    titleFetchEmail: 'Fetch a Microsoft account automatically',
     titleFetchEmailMicrosoftManager: 'Fetch a Microsoft account automatically',
     titleStop: 'Stop current flow',
     titleReset: 'Reset all steps',
@@ -288,16 +217,13 @@ const I18N = {
     labelCpaAuth: 'CPA Auth',
     labelOauthTarget: 'OAuth',
     labelLanguage: 'Language',
-    labelAlias: 'Alias',
-    labelCleanup: 'Cleanup',
     labelBlockedAccountPolicy: 'Blocked Handling',
     labelVerify: 'Verify',
-    labelInbucket: 'Inbucket',
-    labelMailbox: 'Mailbox',
     labelMicrosoftManager: 'MSMgr',
     labelToken: 'Token',
     labelMode: 'Mode',
     labelKeyword: 'Filter',
+    labelAliasPool: 'Alias Pool',
     labelCpaManagementKey: 'CPA Key',
     labelSub2api: 'Sub2API',
     labelSub2apiApiKey: 'API Key',
@@ -308,13 +234,9 @@ const I18N = {
     labelElapsed: 'Elapsed',
     labelAverageDuration: 'Avg Time',
     labelSuccessRate: 'Success Rate',
-    icloudAliasName: 'iCloud Hide My Email',
     microsoftManagerEmailName: 'Microsoft account',
-    cleanupAutoDelete: 'Delete source email after successful use',
     blockedAccountPolicy: 'On AADSTS70000: checked=delete account, unchecked=skip and switch to next',
-    mailProvider163: '163 Mail (mail.163.com)',
-    mailProviderQq: 'QQ Mail (wx.mail.qq.com)',
-    mailProviderInbucket: 'Inbucket (custom host)',
+    microsoftManagerUseAliases: 'Use primary + alias addresses when fetching emails automatically; if unchecked, only primary addresses are used',
     mailProviderMicrosoftManager: 'Microsoft Account Manager API',
     microsoftManagerModeGraph: 'Graph',
     microsoftManagerModeImap: 'IMAP',
@@ -324,12 +246,9 @@ const I18N = {
     placeholderCpaManagementKey: 'Plaintext management key (not $2... hash)',
     placeholderSub2apiBaseUrl: 'https://your-sub2api-host',
     placeholderSub2apiApiKey: 'Optional; use x-api-key or Bearer token',
-    placeholderInbucketHost: 'your inbucket host or https://your-host',
-    placeholderInbucketMailbox: 'e.g. zju2001',
     placeholderMicrosoftManagerUrl: 'https://your-manager-domain',
     placeholderMicrosoftManagerToken: 'Use MAIL_API_TOKEN',
     placeholderMicrosoftManagerKeyword: 'Optional keyword for account filter',
-    placeholderEmail: 'Use Auto to generate an iCloud alias, or paste manually',
     placeholderEmailMicrosoftManager: 'Use Auto to fetch a Microsoft account, or paste manually',
     placeholderPassword: 'Leave blank to auto-generate',
     waiting: 'Waiting...',
@@ -338,17 +257,10 @@ const I18N = {
     btnContinue: 'Continue',
     btnCopy: 'Copy',
     btnPaste: 'Paste',
-    btnRefresh: 'Refresh',
-    btnDeleteUsed: 'Delete Used',
-    btnDelete: 'Delete',
-    btnMarkUsed: 'Mark Used',
-    btnMarkUnused: 'Mark Unused',
-    btnIcloudLoginDone: "I've Signed In",
     btnClear: 'Clear',
     btnSkip: 'Skip',
     btnShow: 'Show',
     btnHide: 'Hide',
-    sectionIcloud: 'iCloud',
     sectionWorkflow: 'Workflow',
     sectionConsole: 'Console',
     step1: 'Get OAuth Link',
@@ -356,9 +268,8 @@ const I18N = {
     step3: 'Fill Email / Password',
     step4: 'Get Signup Code',
     step5: 'Fill Name / Birthday',
-    step8: 'OAuth Auto Confirm',
-    step9: 'Callback Verify / Import',
-    step10: 'Cleanup Source Email',
+    step6: 'OAuth Auto Confirm',
+    step7: 'Callback Verify / Import',
     statusRunning: ({ step }) => `Step ${step} running...`,
     statusFailed: ({ step }) => `Step ${step} failed`,
     statusStopped: ({ step }) => `Step ${step} stopped`,
@@ -366,30 +277,10 @@ const I18N = {
     statusSkipped: ({ step }) => `Step ${step} skipped`,
     statusDone: ({ step }) => `Step ${step} done`,
     statusReady: 'Ready',
-    autoHintEmail: 'Use Auto to generate an iCloud alias, or paste manually, then continue',
     autoHintEmailMicrosoftManager: 'Use Auto to fetch a Microsoft account email, or paste manually, then continue',
     autoHintError: 'Auto run was interrupted by an error. Fix it or skip the failed step, then continue',
     fetchedEmail: ({ email }) => `Fetched ${email}`,
     autoFetchFailed: ({ message }) => `Auto fetch failed: ${message}`,
-    icloudSummaryInitial: 'Load your Hide My Email aliases to manage them here.',
-    icloudEmpty: 'No iCloud Hide My Email aliases found.',
-    icloudAliasesLoaded: ({ count, usedCount }) => `${count} aliases loaded. ${usedCount} marked as used in this plugin.`,
-    icloudLoading: 'Loading iCloud aliases...',
-    icloudLoadFailed: ({ message }) => `iCloud load failed: ${message}`,
-    deletingAlias: ({ email }) => `Deleting ${email}...`,
-    deletedAlias: ({ email }) => `Deleted ${email}`,
-    deleteFailed: ({ message }) => `Delete failed: ${message}`,
-    updatingAliasUsed: ({ email, used }) => `Marking ${email} as ${used ? 'used' : 'unused'}...`,
-    updatedAliasUsed: ({ email, used }) => `${email} marked as ${used ? 'used' : 'unused'}`,
-    updateAliasUsedFailed: ({ message }) => `Failed to update used state: ${message}`,
-    deletingUsedAliases: 'Deleting used iCloud aliases...',
-    deletedUsedAliases: ({ deleted, skipped }) => skipped ? `Deleted ${deleted} used aliases, ${skipped} skipped.` : `Deleted ${deleted} used aliases.`,
-    bulkDeleteFailed: ({ message }) => `Bulk delete failed: ${message}`,
-    icloudLoginRequiredToast: 'iCloud sign-in is required. A login page has been opened for you.',
-    icloudLoginHelpTitle: 'iCloud sign-in required',
-    icloudLoginHelpText: ({ host }) => `We opened ${host} for you. Please finish sign-in there, then return here and click "I've Signed In".`,
-    icloudSessionReady: 'iCloud session is ready. Alias list refreshed.',
-    icloudStillNotSignedIn: ({ message }) => `Still not signed in: ${message}`,
     pleaseEnterEmailFirst: 'Please paste email address or use Auto first',
     skipFailed: ({ message }) => `Skip failed: ${message}`,
     stepSkippedToast: ({ step }) => `Step ${step} skipped`,
@@ -721,28 +612,20 @@ function getCopyLabel(kind) {
   return 'value';
 }
 
-function isMicrosoftManagerProviderSelected() {
-  return normalizeMailProviderValue(selectMailProvider.value) === 'microsoft-manager';
-}
-
-function shouldUseIcloudUi() {
-  return !isMicrosoftManagerProviderSelected();
-}
-
 function getEmailSourceLabel() {
-  return isMicrosoftManagerProviderSelected() ? t('microsoftManagerEmailName') : t('icloudAliasName');
+  return t('microsoftManagerEmailName');
 }
 
 function getFetchEmailTitle() {
-  return isMicrosoftManagerProviderSelected() ? t('titleFetchEmailMicrosoftManager') : t('titleFetchEmail');
+  return t('titleFetchEmailMicrosoftManager');
 }
 
 function getEmailPlaceholderText() {
-  return isMicrosoftManagerProviderSelected() ? t('placeholderEmailMicrosoftManager') : t('placeholderEmail');
+  return t('placeholderEmailMicrosoftManager');
 }
 
 function getAutoHintText() {
-  return isMicrosoftManagerProviderSelected() ? t('autoHintEmailMicrosoftManager') : t('autoHintEmail');
+  return t('autoHintEmailMicrosoftManager');
 }
 
 function isSub2apiOauthProviderSelected() {
@@ -797,10 +680,6 @@ function applyLanguage(language) {
     displayStatus.textContent = t('statusReady');
   }
   renderRunMetrics();
-  renderIcloudAliases(lastRenderedIcloudAliases);
-  if (!icloudSummary.textContent || icloudSummary.textContent === 'Load your Hide My Email aliases to manage them here.') {
-    icloudSummary.textContent = t('icloudSummaryInitial');
-  }
 }
 
 async function saveVpsUrlValue(value) {
@@ -903,7 +782,6 @@ async function restoreState() {
     if (state.sub2apiAdminApiKey) {
       inputSub2apiApiKey.value = state.sub2apiAdminApiKey;
     }
-    checkboxAutoDeleteIcloud.checked = Boolean(state.autoDeleteUsedIcloudAlias);
     checkboxDeleteBlockedAccount.checked = Boolean(state.deleteAbusedMicrosoftAccount);
     if (state.language) {
       selectLanguage.value = state.language;
@@ -912,12 +790,6 @@ async function restoreState() {
       selectMailProvider.value = normalizeMailProviderValue(state.mailProvider);
     } else {
       selectMailProvider.value = 'microsoft-manager';
-    }
-    if (state.inbucketHost) {
-      inputInbucketHost.value = state.inbucketHost;
-    }
-    if (state.inbucketMailbox) {
-      inputInbucketMailbox.value = state.inbucketMailbox;
     }
     if (state.microsoftManagerUrl) {
       inputMicrosoftManagerUrl.value = state.microsoftManagerUrl;
@@ -931,6 +803,7 @@ async function restoreState() {
     if (state.microsoftManagerKeyword) {
       inputMicrosoftManagerKeyword.value = state.microsoftManagerKeyword;
     }
+    checkboxMicrosoftManagerUseAliases.checked = Boolean(state.microsoftManagerUseAliases);
 
     if (state.stepStatuses) {
       for (const [step, status] of Object.entries(state.stepStatuses)) {
@@ -974,27 +847,21 @@ function syncPasswordField(state) {
 
 function updateMailProviderUI() {
   selectMailProvider.value = normalizeMailProviderValue(selectMailProvider.value);
-  const useInbucket = false;
   const useMicrosoftManager = true;
   rowMailProvider.style.display = '';
   selectMailProvider.disabled = selectMailProvider.options.length <= 1;
-  rowInbucketHost.style.display = useInbucket ? '' : 'none';
-  rowInbucketMailbox.style.display = useInbucket ? '' : 'none';
   rowMicrosoftManagerUrl.style.display = useMicrosoftManager ? '' : 'none';
   rowMicrosoftManagerToken.style.display = useMicrosoftManager ? '' : 'none';
   rowMicrosoftManagerMode.style.display = useMicrosoftManager ? '' : 'none';
   rowMicrosoftManagerKeyword.style.display = useMicrosoftManager ? '' : 'none';
+  rowMicrosoftManagerAliasToggle.style.display = useMicrosoftManager ? '' : 'none';
 }
 
 function updateEmailSourceUI() {
-  if (aliasSourceValue) {
-    aliasSourceValue.textContent = getEmailSourceLabel();
-  }
   inputEmail.placeholder = getEmailPlaceholderText();
   autoHint.textContent = getAutoHintText();
   btnFetchEmail.disabled = false;
   btnFetchEmail.title = getFetchEmailTitle();
-  icloudSection.style.display = shouldUseIcloudUi() ? '' : 'none';
 }
 
 async function syncRuntimeSettingsBeforeExecution() {
@@ -1010,12 +877,11 @@ async function syncRuntimeSettingsBeforeExecution() {
       deleteAbusedMicrosoftAccount: checkboxDeleteBlockedAccount.checked,
       customPassword: inputPassword.value,
       mailProvider: normalizeMailProviderValue(selectMailProvider.value),
-      inbucketHost: inputInbucketHost.value.trim(),
-      inbucketMailbox: inputInbucketMailbox.value.trim(),
       microsoftManagerUrl: inputMicrosoftManagerUrl.value.trim(),
       microsoftManagerToken: inputMicrosoftManagerToken.value.trim(),
       microsoftManagerMode: selectMicrosoftManagerMode.value,
       microsoftManagerKeyword: inputMicrosoftManagerKeyword.value.trim(),
+      microsoftManagerUseAliases: checkboxMicrosoftManagerUseAliases.checked,
     },
   });
 }
@@ -1069,7 +935,7 @@ function updateButtonStates() {
     if (!btn) continue;
 
     const currentStatus = statuses[step];
-    const prevStep = PREVIOUS_WORKFLOW_STEP[step];
+    const prevStep = step > 1 ? step - 1 : null;
 
     if (anyRunning) {
       btn.disabled = true;
@@ -1110,21 +976,21 @@ function updateStatusDisplay(state) {
 
   const running = visibleEntries.find(([, s]) => s === 'running');
   if (running) {
-    displayStatus.textContent = t('statusRunning', { step: toDisplayStep(running[0]) });
+    displayStatus.textContent = t('statusRunning', { step: running[0] });
     statusBar.classList.add('running');
     return;
   }
 
   const failed = visibleEntries.find(([, s]) => s === 'failed');
   if (failed) {
-    displayStatus.textContent = t('statusFailed', { step: toDisplayStep(failed[0]) });
+    displayStatus.textContent = t('statusFailed', { step: failed[0] });
     statusBar.classList.add('failed');
     return;
   }
 
   const stopped = visibleEntries.find(([, s]) => s === 'stopped');
   if (stopped) {
-    displayStatus.textContent = t('statusStopped', { step: toDisplayStep(stopped[0]) });
+    displayStatus.textContent = t('statusStopped', { step: stopped[0] });
     statusBar.classList.add('stopped');
     return;
   }
@@ -1143,8 +1009,8 @@ function updateStatusDisplay(state) {
 
   if (lastProgressed) {
     displayStatus.textContent = state.stepStatuses[lastProgressed] === 'skipped'
-      ? t('statusSkipped', { step: toDisplayStep(lastProgressed) })
-      : t('statusDone', { step: toDisplayStep(lastProgressed) });
+      ? t('statusSkipped', { step: lastProgressed })
+      : t('statusDone', { step: lastProgressed });
   } else {
     displayStatus.textContent = t('statusReady');
   }
@@ -1155,7 +1021,7 @@ function appendLog(entry) {
   const levelLabel = entry.level.toUpperCase();
   const line = document.createElement('div');
   line.className = `log-line log-${entry.level}`;
-  const displayMessage = replaceStepNumberForDisplay(entry.message);
+  const displayMessage = String(entry.message || '');
 
   const stepMatch = entry.message.match(/Step (\d+)/);
   const stepNum = stepMatch ? stepMatch[1] : null;
@@ -1163,7 +1029,7 @@ function appendLog(entry) {
   let html = `<span class="log-time">${time}</span> `;
   html += `<span class="log-level log-level-${entry.level}">${levelLabel}</span> `;
   if (stepNum) {
-    html += `<span class="log-step-tag step-${stepNum}">S${toDisplayStep(stepNum)}</span>`;
+    html += `<span class="log-step-tag step-${stepNum}">S${stepNum}</span>`;
   }
   html += `<span class="log-msg">${escapeHtml(displayMessage)}</span>`;
 
@@ -1182,7 +1048,6 @@ async function fetchConfiguredEmail() {
   const defaultLabel = t('btnAuto');
   btnFetchEmail.disabled = true;
   btnFetchEmail.textContent = '...';
-  const sourceLabel = getEmailSourceLabel();
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -1195,7 +1060,7 @@ async function fetchConfiguredEmail() {
       throw new Error(response.error);
     }
     if (!response?.email) {
-      throw new Error(`${sourceLabel} email was not returned.`);
+      throw new Error('Email was not returned.');
     }
 
     inputEmail.value = response.email;
@@ -1207,168 +1072,6 @@ async function fetchConfiguredEmail() {
   } finally {
     btnFetchEmail.disabled = false;
     btnFetchEmail.textContent = defaultLabel;
-  }
-}
-
-function setIcloudLoadingState(loading, summary = '') {
-  btnIcloudRefresh.disabled = loading;
-  btnIcloudDeleteUsed.disabled = loading;
-  btnIcloudLoginDone.disabled = loading;
-  if (summary) icloudSummary.textContent = summary;
-}
-
-function showIcloudLoginHelp(payload = {}) {
-  const loginUrl = String(payload.loginUrl || '').trim();
-  const host = loginUrl ? new URL(loginUrl).host : 'icloud.com.cn / icloud.com';
-  icloudLoginHelpTitle.textContent = t('icloudLoginHelpTitle');
-  icloudLoginHelpText.textContent = t('icloudLoginHelpText', { host });
-  icloudLoginHelp.style.display = 'flex';
-}
-
-function hideIcloudLoginHelp() {
-  icloudLoginHelp.style.display = 'none';
-}
-
-function renderIcloudAliases(aliases = []) {
-  lastRenderedIcloudAliases = Array.isArray(aliases) ? aliases : [];
-  icloudList.innerHTML = '';
-
-  if (!aliases.length) {
-    icloudList.innerHTML = `<div class="icloud-empty">${escapeHtml(t('icloudEmpty'))}</div>`;
-    icloudSummary.textContent = t('icloudSummaryInitial');
-    btnIcloudDeleteUsed.disabled = true;
-    return;
-  }
-
-  const usedCount = aliases.filter(alias => alias.used).length;
-  icloudSummary.textContent = t('icloudAliasesLoaded', { count: aliases.length, usedCount });
-  btnIcloudDeleteUsed.disabled = usedCount === 0;
-
-  for (const alias of aliases) {
-    const item = document.createElement('div');
-    item.className = 'icloud-item';
-    item.innerHTML = `
-      <div class="icloud-item-main">
-        <div class="icloud-item-email">${escapeHtml(alias.email)}</div>
-        <div class="icloud-item-meta">
-          ${alias.used ? `<span class="icloud-tag used">${escapeHtml(currentLanguage === 'zh-CN' ? '已用' : 'Used')}</span>` : ''}
-          ${!alias.used && alias.active ? `<span class="icloud-tag active">${escapeHtml(currentLanguage === 'zh-CN' ? '可用' : 'Active')}</span>` : ''}
-          ${alias.label ? `<span class="icloud-tag">${escapeHtml(alias.label)}</span>` : ''}
-          ${alias.note ? `<span class="icloud-tag">${escapeHtml(alias.note)}</span>` : ''}
-        </div>
-      </div>
-      <div class="icloud-item-actions">
-        <button class="btn btn-outline btn-xs" type="button" data-action="toggle-used">${escapeHtml(alias.used ? t('btnMarkUnused') : t('btnMarkUsed'))}</button>
-        <button class="btn btn-outline btn-xs" type="button" data-action="delete">${escapeHtml(t('btnDelete'))}</button>
-      </div>
-    `;
-
-    item.querySelector('[data-action="toggle-used"]').addEventListener('click', async () => {
-      await setSingleIcloudAliasUsedState(alias, !alias.used);
-    });
-    item.querySelector('[data-action="delete"]').addEventListener('click', async () => {
-      await deleteSingleIcloudAlias(alias);
-    });
-    icloudList.appendChild(item);
-  }
-}
-
-async function refreshIcloudAliases(options = {}) {
-  const { silent = false } = options;
-
-  if (!shouldUseIcloudUi()) {
-    hideIcloudLoginHelp();
-    return;
-  }
-
-  if (!silent) setIcloudLoadingState(true, t('icloudLoading'));
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: 'LIST_ICLOUD_ALIASES',
-      source: 'sidepanel',
-      payload: {},
-    });
-
-    if (response?.error) throw new Error(response.error);
-    hideIcloudLoginHelp();
-    renderIcloudAliases(response?.aliases || []);
-  } catch (err) {
-    icloudList.innerHTML = `<div class="icloud-empty">${escapeHtml(currentLanguage === 'zh-CN' ? '无法加载 iCloud 别名。' : 'Could not load iCloud aliases.')}</div>`;
-    icloudSummary.textContent = err.message;
-    if (!silent) showToast(t('icloudLoadFailed', { message: err.message }), 'error');
-  } finally {
-    btnIcloudRefresh.disabled = false;
-  }
-}
-
-function queueIcloudAliasRefresh() {
-  if (!shouldUseIcloudUi()) return;
-  if (icloudRefreshQueued) return;
-  icloudRefreshQueued = true;
-  setTimeout(async () => {
-    icloudRefreshQueued = false;
-    await refreshIcloudAliases({ silent: true });
-  }, 150);
-}
-
-async function deleteSingleIcloudAlias(alias) {
-  setIcloudLoadingState(true, t('deletingAlias', { email: alias.email }));
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: 'DELETE_ICLOUD_ALIAS',
-      source: 'sidepanel',
-      payload: { email: alias.email, anonymousId: alias.anonymousId },
-    });
-    if (response?.error) throw new Error(response.error);
-    showToast(t('deletedAlias', { email: alias.email }), 'success', 2500);
-    await refreshIcloudAliases({ silent: true });
-  } catch (err) {
-    showToast(t('deleteFailed', { message: err.message }), 'error');
-    icloudSummary.textContent = err.message;
-  } finally {
-    btnIcloudRefresh.disabled = false;
-  }
-}
-
-async function setSingleIcloudAliasUsedState(alias, used) {
-  setIcloudLoadingState(true, t('updatingAliasUsed', { email: alias.email, used }));
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: 'SET_ICLOUD_ALIAS_USED_STATE',
-      source: 'sidepanel',
-      payload: { email: alias.email, used },
-    });
-    if (response?.error) throw new Error(response.error);
-    showToast(t('updatedAliasUsed', { email: alias.email, used }), 'success', 2500);
-    await refreshIcloudAliases({ silent: true });
-  } catch (err) {
-    showToast(t('updateAliasUsedFailed', { message: err.message }), 'error');
-    icloudSummary.textContent = err.message;
-  } finally {
-    btnIcloudRefresh.disabled = false;
-  }
-}
-
-async function deleteUsedIcloudAliases() {
-  setIcloudLoadingState(true, t('deletingUsedAliases'));
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: 'DELETE_USED_ICLOUD_ALIASES',
-      source: 'sidepanel',
-      payload: {},
-    });
-    if (response?.error) throw new Error(response.error);
-
-    const deleted = response?.deleted || [];
-    const skipped = response?.skipped || [];
-    const summary = t('deletedUsedAliases', { deleted: deleted.length, skipped: skipped.length });
-    showToast(summary, skipped.length ? 'warn' : 'success', 3000);
-    await refreshIcloudAliases({ silent: true });
-  } catch (err) {
-    showToast(t('bulkDeleteFailed', { message: err.message }), 'error');
-    icloudSummary.textContent = err.message;
-  } finally {
-    btnIcloudRefresh.disabled = false;
   }
 }
 
@@ -1409,13 +1112,12 @@ document.querySelectorAll('.step-skip-btn').forEach(btn => {
       showToast(t('skipFailed', { message: response.error }), 'error');
       return;
     }
-    showToast(t('stepSkippedToast', { step: toDisplayStep(step) }), 'warn', 2000);
+    showToast(t('stepSkippedToast', { step }), 'warn', 2000);
   });
 });
 
 btnFetchEmail.addEventListener('click', async () => {
   await fetchConfiguredEmail().catch(() => {});
-  await refreshIcloudAliases({ silent: true });
 });
 
 btnCopyEmail.addEventListener('click', async () => {
@@ -1428,35 +1130,6 @@ btnCopyPassword.addEventListener('click', async () => {
 
 btnPasteVpsUrl.addEventListener('click', async () => {
   await pasteCpaAuthFromClipboard();
-});
-
-btnIcloudRefresh.addEventListener('click', async () => {
-  await refreshIcloudAliases();
-});
-
-btnIcloudDeleteUsed.addEventListener('click', async () => {
-  await deleteUsedIcloudAliases();
-});
-
-btnIcloudLoginDone.addEventListener('click', async () => {
-  btnIcloudLoginDone.disabled = true;
-  try {
-    const response = await chrome.runtime.sendMessage({
-      type: 'CHECK_ICLOUD_SESSION',
-      source: 'sidepanel',
-      payload: {},
-    });
-    if (response?.error) {
-      throw new Error(response.error);
-    }
-    hideIcloudLoginHelp();
-    showToast(t('icloudSessionReady'), 'success', 3000);
-    await refreshIcloudAliases({ silent: true });
-  } catch (err) {
-    showToast(t('icloudStillNotSignedIn', { message: err.message }), 'warn', 4500);
-  } finally {
-    btnIcloudLoginDone.disabled = false;
-  }
 });
 
 btnTogglePassword.addEventListener('click', () => {
@@ -1598,14 +1271,6 @@ inputPassword.addEventListener('change', async () => {
   });
 });
 
-checkboxAutoDeleteIcloud.addEventListener('change', async () => {
-  await chrome.runtime.sendMessage({
-    type: 'SAVE_SETTING',
-    source: 'sidepanel',
-    payload: { autoDeleteUsedIcloudAlias: checkboxAutoDeleteIcloud.checked },
-  });
-});
-
 checkboxDeleteBlockedAccount.addEventListener('change', async () => {
   await chrome.runtime.sendMessage({
     type: 'SAVE_SETTING',
@@ -1622,12 +1287,6 @@ selectMailProvider.addEventListener('change', async () => {
     type: 'SAVE_SETTING', source: 'sidepanel',
     payload: { mailProvider: normalizeMailProviderValue(selectMailProvider.value) },
   });
-
-  if (shouldUseIcloudUi()) {
-    await refreshIcloudAliases({ silent: true });
-  } else {
-    hideIcloudLoginHelp();
-  }
 });
 
 selectLanguage.addEventListener('change', async () => {
@@ -1636,22 +1295,6 @@ selectLanguage.addEventListener('change', async () => {
     type: 'SAVE_SETTING',
     source: 'sidepanel',
     payload: { language: currentLanguage },
-  });
-});
-
-inputInbucketMailbox.addEventListener('change', async () => {
-  await chrome.runtime.sendMessage({
-    type: 'SAVE_SETTING',
-    source: 'sidepanel',
-    payload: { inbucketMailbox: inputInbucketMailbox.value.trim() },
-  });
-});
-
-inputInbucketHost.addEventListener('change', async () => {
-  await chrome.runtime.sendMessage({
-    type: 'SAVE_SETTING',
-    source: 'sidepanel',
-    payload: { inbucketHost: inputInbucketHost.value.trim() },
   });
 });
 
@@ -1687,6 +1330,14 @@ inputMicrosoftManagerKeyword.addEventListener('change', async () => {
   });
 });
 
+checkboxMicrosoftManagerUseAliases.addEventListener('change', async () => {
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: { microsoftManagerUseAliases: checkboxMicrosoftManagerUseAliases.checked },
+  });
+});
+
 // ============================================================
 // Listen for Background broadcasts
 // ============================================================
@@ -1696,7 +1347,7 @@ chrome.runtime.onMessage.addListener((message) => {
     case 'LOG_ENTRY':
       appendLog(message.payload);
       if (message.payload.level === 'error') {
-        showToast(replaceStepNumberForDisplay(message.payload.message), 'error');
+        showToast(String(message.payload.message || ''), 'error');
       }
       break;
 
@@ -1732,8 +1383,6 @@ chrome.runtime.onMessage.addListener((message) => {
       logArea.innerHTML = '';
       document.querySelectorAll('.step-row').forEach(row => row.className = 'step-row');
       document.querySelectorAll('.step-status').forEach(el => el.textContent = '');
-      icloudList.innerHTML = '';
-      icloudSummary.textContent = t('icloudSummaryInitial');
       updateStopButtonState(false);
       updateProgressCounter();
       renderRunMetrics();
@@ -1762,18 +1411,6 @@ chrome.runtime.onMessage.addListener((message) => {
       }
       break;
     }
-
-    case 'ICLOUD_LOGIN_REQUIRED': {
-      const loginMessage = t('icloudLoginRequiredToast');
-      showToast(loginMessage, 'warn', 5000);
-      icloudSummary.textContent = loginMessage;
-      showIcloudLoginHelp(message.payload || {});
-      break;
-    }
-
-    case 'ICLOUD_ALIASES_CHANGED':
-      queueIcloudAliasRefresh();
-      break;
 
     case 'AUTO_RUN_STATUS': {
       const { phase, currentRun, totalRuns } = message.payload;
@@ -1867,8 +1504,5 @@ renderVersionBadge();
 restoreState().then(() => {
   syncPasswordToggleLabel();
   updateButtonStates();
-  if (shouldUseIcloudUi()) {
-    refreshIcloudAliases({ silent: true });
-  }
   checkLatestReleaseVersion().catch(() => {});
 });
