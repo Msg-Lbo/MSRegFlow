@@ -933,6 +933,7 @@ async function handleMicrosoftServiceAbuseDuringStep4(state, context = {}) {
 }
 
 async function handleMicrosoftPhoneChallengeDuringStep4(state, context = {}) {
+  const shouldRestartSignup = context.restartSignup !== false;
   const currentEmail = String(state.email || '').trim();
   if (!currentEmail) {
     throw new Error('Current email is empty when handling phone-challenge fallback.');
@@ -964,6 +965,10 @@ async function handleMicrosoftPhoneChallengeDuringStep4(state, context = {}) {
     `Step 4: Switched to replacement email ${replacementEmail} after add-phone (${context.round || 1}/${context.maxRounds || 1}).`,
     'ok'
   );
+
+  if (!shouldRestartSignup) {
+    return;
+  }
 
   const refreshed = await getState();
   await reopenSignupForReplacementEmail(refreshed);
@@ -3203,6 +3208,7 @@ async function executeStep6(state) {
   return new Promise((resolve, reject) => {
     let resolved = false;
     let resolveCaptureWait = null;
+    let stopWatcher = null;
     const captureWait = new Promise((resolveCapture) => {
       resolveCaptureWait = resolveCapture;
     });
@@ -3214,6 +3220,12 @@ async function executeStep6(state) {
       }
     };
 
+    const cleanupAll = () => {
+      cleanupListener();
+      clearTimeout(timeout);
+      clearTimeout(stopWatcher);
+    };
+
     const timeout = setTimeout(() => {
       (async () => {
         if (resolved) return;
@@ -3222,17 +3234,29 @@ async function executeStep6(state) {
           const callbackUrl = await findExistingLocalCallbackUrl();
           if (callbackUrl) {
             resolved = true;
-            cleanupListener();
+            cleanupAll();
             await finalizeStep6WithCallbackUrl(callbackUrl);
             resolve();
             return;
           }
         } catch {}
 
-        cleanupListener();
+        cleanupAll();
         reject(new Error('Localhost redirect not captured after 120s. Step 6 click may have been blocked.'));
       })();
     }, 120000);
+
+    const watchStopRequested = () => {
+      if (resolved) return;
+      if (stopRequested) {
+        resolved = true;
+        cleanupAll();
+        reject(new Error(STOP_ERROR_MESSAGE));
+        return;
+      }
+      stopWatcher = setTimeout(watchStopRequested, 120);
+    };
+    watchStopRequested();
 
     webNavListener = (details) => {
       if (!isLocalCallbackUrl(details.url) || resolved) {
@@ -3241,8 +3265,7 @@ async function executeStep6(state) {
 
       resolved = true;
       console.log(LOG_PREFIX, `Captured localhost redirect: ${details.url}`);
-      cleanupListener();
-      clearTimeout(timeout);
+      cleanupAll();
       if (resolveCaptureWait) resolveCaptureWait(details.url);
 
       (async () => {
@@ -3338,6 +3361,24 @@ async function executeStep6(state) {
         }
 
         const message = getErrorMessage(err);
+        const phoneChallengeError = isMicrosoftPhoneChallengeError(message);
+        if (phoneChallengeError) {
+          try {
+            const current = await getState();
+            await handleMicrosoftPhoneChallengeDuringStep4(current, {
+              round: 1,
+              maxRounds: 1,
+              restartSignup: false,
+            });
+          } catch (fallbackErr) {
+            await addLog(`Step 6: add-phone fallback handling failed: ${getErrorMessage(fallbackErr)}`, 'warn');
+          }
+          resolved = true;
+          cleanupAll();
+          reject(new Error('Step 6: Detected add-phone challenge. Email has been marked and replaced. Please rerun from step 3.'));
+          return;
+        }
+
         await addLog(
           `Step 6: Auto click was not completed (${message}). Please click consent manually; still waiting for localhost redirect...`,
           'warn'
