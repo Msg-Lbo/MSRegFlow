@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MSRegFlow",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArJ0iS85Bvythvld53mst35rIKEJl62eNgW2jUWQzJm+5y/+/alMy+UHckIZNRlob+vg115wUFArmlO+e3HRKxQj02ispMyz7Vx2Gzl6g09tlu8OgH/2w3TmZNETDbBsA7PDYf5Ql/Zf6SFZ0/NUR0hPTOw8WHqe/bMYtbfqc9t0FqefJ7xSVGhptqZ0S2RyMGL1CCaCXIhYgXUY7oShRsHkRDQKyIOk4g16jH6G8NpxfxebpJKoMI0jjIouvafFKSb7U8Ghk6C66ccjX9nvSQWLS1kFOvbRJcr164OBw7BlWDpU1TNL15DoYjyD8mqqTQHmshPSlpU2IsUeh8SCR0QIDAQAB",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Automates OAuth registration workflow with Microsoft Account Manager API",
   "permissions": [
     "sidePanel",

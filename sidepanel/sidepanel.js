@@ -1082,7 +1082,8 @@ function updateButtonStates() {
 }
 
 function updateStopButtonState(active) {
-  btnStop.disabled = !active;
+  const autoRunActive = Boolean(lastKnownState?.autoRunning);
+  btnStop.disabled = !(active || autoRunActive);
 }
 
 function updateStatusDisplay(state) {
@@ -1265,8 +1266,21 @@ btnVersion.addEventListener('click', async () => {
 
 btnStop.addEventListener('click', async () => {
   btnStop.disabled = true;
-  await chrome.runtime.sendMessage({ type: 'STOP_FLOW', source: 'sidepanel', payload: {} });
-  showToast(t('stoppingFlow'), 'warn', 2000);
+  try {
+    const response = await chrome.runtime.sendMessage({ type: 'STOP_FLOW', source: 'sidepanel', payload: {} });
+    if (response?.error) {
+      throw new Error(response.error);
+    }
+    showToast(t('stoppingFlow'), 'warn', 2000);
+  } catch (err) {
+    showToast(t('continueFailed', { message: err.message || err }), 'error');
+  } finally {
+    try {
+      const state = await chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' });
+      updateStatusDisplay(state);
+      updateButtonStates();
+    } catch {}
+  }
 });
 
 // Auto Run

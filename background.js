@@ -1822,6 +1822,9 @@ async function waitForSignupSurface(payload, timeout = 20000) {
       }
       return response;
     } catch (err) {
+      if (isMicrosoftPhoneChallengeError(err) || isMicrosoftServiceAbuseError(err)) {
+        throw err;
+      }
       lastError = err;
       await sleepWithStop(160);
     }

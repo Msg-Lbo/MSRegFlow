@@ -6,12 +6,13 @@ console.log('[MultiPage:signup-page] Content script loaded on', location.href);
 // Listen for commands from Background
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'EXECUTE_STEP' || message.type === 'FILL_CODE' || message.type === 'STEP6_FIND_AND_CLICK' || message.type === 'WAIT_FOR_SURFACE' || message.type === 'RESEND_VERIFICATION_CODE' || message.type === 'RECOVER_PASSWORD_TIMEOUT') {
+    const reportedStep = Number(message.step || message?.payload?.step || 0) || null;
     resetStopState();
     handleCommand(message).then((result) => {
       sendResponse({ ok: true, ...(result || {}) });
     }).catch(err => {
       if (isStopError(err)) {
-          log(`Step ${message.step || 6}: Stopped by user.`, 'warn');
+          log(`Step ${reportedStep || 6}: Stopped by user.`, 'warn');
         sendResponse({ stopped: true, error: err.message });
         return;
       }
@@ -23,18 +24,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       if (message.type === 'RESEND_VERIFICATION_CODE') {
-        log(`Step ${message.step}: ${err.message}`, 'error');
+        log(`Step ${reportedStep || 'surface'}: ${err.message}`, 'error');
+        sendResponse({ error: err.message });
+        return;
+      }
+
+      if (message.type === 'WAIT_FOR_SURFACE') {
+        log(`Step ${reportedStep || 'surface'}: ${err.message}`, 'error');
         sendResponse({ error: err.message });
         return;
       }
 
       if (message.type === 'RECOVER_PASSWORD_TIMEOUT') {
-        log(`Step ${message.step || 3}: ${err.message}`, 'error');
+        log(`Step ${reportedStep || 3}: ${err.message}`, 'error');
         sendResponse({ error: err.message });
         return;
       }
 
-      reportError(message.step, err.message);
+      reportError(reportedStep, err.message);
       sendResponse({ error: err.message });
     });
     return true;
