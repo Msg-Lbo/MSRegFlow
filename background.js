@@ -6,14 +6,34 @@ const LOG_PREFIX = '[MultiPage:bg]';
 const STOP_ERROR_MESSAGE = 'Flow stopped by user.';
 const HUMAN_STEP_DELAY_MIN = 250;
 const HUMAN_STEP_DELAY_MAX = 900;
-const TOTAL_STEPS = 7;
-const AUTO_RUN_STEP_SEQUENCE = [1, 2, 3, 4, 5, 6, 7];
+const TOTAL_STEPS = 8;
+const AUTO_RUN_STEP_SEQUENCE = [1, 2, 3, 4, 5, 6, 7, 8];
 const SUB2API_POST_IMPORT_DEFAULTS = Object.freeze({
   maxConcurrency: 10,
   loadFactor: 10,
   priority: 1,
   billingMultiplier: 1,
 });
+const HEROSMS_RUNTIME_STATE_SET = new Set([
+  'idle',
+  'running',
+  'waiting_code',
+  'submitting_code',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+
+function createHeroSmsRuntimeState() {
+  return {
+    state: 'idle',
+    activationId: '',
+    maskedPhone: '',
+    detail: '',
+    error: '',
+    updatedAt: 0,
+  };
+}
 
 initializeSessionStorageAccess().catch(() => {});
 bootstrapPersistentSettings().catch((err) => {
@@ -28,7 +48,7 @@ const DEFAULT_STATE = {
   currentStep: 0,
   stepStatuses: {
     1: 'pending', 2: 'pending', 3: 'pending', 4: 'pending', 5: 'pending',
-    6: 'pending', 7: 'pending',
+    6: 'pending', 7: 'pending', 8: 'pending',
   },
   autoRunning: false,
   autoRunCurrentRun: 0,
@@ -62,6 +82,16 @@ const DEFAULT_STATE = {
   microsoftManagerKeyword: '',
   microsoftManagerUseAliases: false,
   blockedMicrosoftEmails: {},
+  heroSmsEnabled: false,
+  heroSmsApiKey: '',
+  heroSmsCountryId: 0,
+  heroSmsCountryMeta: null,
+  heroSmsBalanceLabel: '',
+  heroSmsServiceCode: '',
+  heroSmsOperator: '',
+  heroSmsMaxPrice: '',
+  heroSmsFixedPrice: false,
+  heroSmsRuntime: createHeroSmsRuntimeState(),
 };
 
 const PERSISTENT_SETTING_KEYS = [
@@ -80,6 +110,14 @@ const PERSISTENT_SETTING_KEYS = [
   'microsoftManagerMode',
   'microsoftManagerKeyword',
   'microsoftManagerUseAliases',
+  'heroSmsEnabled',
+  'heroSmsApiKey',
+  'heroSmsCountryId',
+  'heroSmsCountryMeta',
+  'heroSmsServiceCode',
+  'heroSmsOperator',
+  'heroSmsMaxPrice',
+  'heroSmsFixedPrice',
 ];
 
 function normalizePersistentSettings(raw = {}) {
@@ -99,6 +137,14 @@ function normalizePersistentSettings(raw = {}) {
     microsoftManagerMode: normalizeMicrosoftManagerMode(raw.microsoftManagerMode || DEFAULT_STATE.microsoftManagerMode),
     microsoftManagerKeyword: String(raw.microsoftManagerKeyword || ''),
     microsoftManagerUseAliases: Boolean(raw.microsoftManagerUseAliases),
+    heroSmsEnabled: Boolean(raw.heroSmsEnabled),
+    heroSmsApiKey: String(raw.heroSmsApiKey || ''),
+    heroSmsCountryId: normalizeHeroSmsCountryId(raw.heroSmsCountryId),
+    heroSmsCountryMeta: normalizeHeroSmsCountryMeta(raw.heroSmsCountryMeta),
+    heroSmsServiceCode: String(raw.heroSmsServiceCode || '').trim().toLowerCase(),
+    heroSmsOperator: normalizeHeroSmsOperator(raw.heroSmsOperator),
+    heroSmsMaxPrice: normalizeHeroSmsMaxPrice(raw.heroSmsMaxPrice),
+    heroSmsFixedPrice: Boolean(raw.heroSmsFixedPrice),
   };
 }
 
@@ -158,6 +204,15 @@ async function getState() {
     mailProvider: normalizeMailProvider(merged.mailProvider),
     microsoftManagerMode: normalizeMicrosoftManagerMode(merged.microsoftManagerMode),
     sub2apiSelectedGroupIds: normalizeSub2apiGroupIds(merged.sub2apiSelectedGroupIds),
+    heroSmsEnabled: Boolean(merged.heroSmsEnabled),
+    heroSmsApiKey: normalizeHeroSmsApiKey(merged.heroSmsApiKey),
+    heroSmsCountryId: normalizeHeroSmsCountryId(merged.heroSmsCountryId),
+    heroSmsCountryMeta: normalizeHeroSmsCountryMeta(merged.heroSmsCountryMeta),
+    heroSmsServiceCode: String(merged.heroSmsServiceCode || '').trim().toLowerCase(),
+    heroSmsOperator: normalizeHeroSmsOperator(merged.heroSmsOperator),
+    heroSmsMaxPrice: normalizeHeroSmsMaxPrice(merged.heroSmsMaxPrice),
+    heroSmsFixedPrice: Boolean(merged.heroSmsFixedPrice),
+    heroSmsRuntime: normalizeHeroSmsRuntime(merged.heroSmsRuntime),
   };
 }
 
@@ -172,6 +227,69 @@ function normalizeSub2apiGroupIds(rawValue) {
   return [...unique];
 }
 
+function normalizeHeroSmsCountryId(rawValue) {
+  const value = Number(rawValue);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.trunc(value);
+}
+
+function normalizeHeroSmsDialCode(rawValue) {
+  let digits = String(rawValue || '').replace(/\D/g, '');
+  if (digits.startsWith('00')) {
+    digits = digits.slice(2);
+  }
+  return digits;
+}
+
+function normalizeHeroSmsRuntimeState(rawValue) {
+  const state = String(rawValue || '').trim().toLowerCase();
+  return HEROSMS_RUNTIME_STATE_SET.has(state) ? state : 'idle';
+}
+
+function normalizeHeroSmsRuntime(rawValue) {
+  const source = rawValue && typeof rawValue === 'object' ? rawValue : {};
+  const updatedAt = Number(source.updatedAt);
+  return {
+    state: normalizeHeroSmsRuntimeState(source.state),
+    activationId: normalizeHeroSmsActivationId(source.activationId),
+    maskedPhone: String(source.maskedPhone || '').trim(),
+    detail: String(source.detail || '').trim(),
+    error: String(source.error || '').trim(),
+    updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+  };
+}
+
+function normalizeHeroSmsCountryMeta(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object') return null;
+
+  const id = normalizeHeroSmsCountryId(rawValue.id || rawValue.countryId || rawValue.country);
+  if (!id) return null;
+
+  const displayName = String(rawValue.displayName || '').trim();
+  const eng = String(rawValue.eng || '').trim();
+  const chn = String(rawValue.chn || '').trim();
+  const rus = String(rawValue.rus || '').trim();
+  const dialCode = normalizeHeroSmsDialCode(
+    rawValue.dialCode
+    || rawValue.phoneCode
+    || rawValue.phone_code
+    || rawValue.prefix
+  );
+  const costNumber = Number(rawValue.cost);
+  const countNumber = Number(rawValue.count);
+
+  return {
+    id,
+    displayName: displayName || chn || eng || rus || `#${id}`,
+    eng,
+    chn,
+    rus,
+    dialCode,
+    cost: Number.isFinite(costNumber) ? costNumber : null,
+    count: Number.isFinite(countNumber) ? Math.trunc(countNumber) : null,
+  };
+}
+
 function normalizeOauthProvider(rawValue) {
   return String(rawValue || '').trim().toLowerCase() === 'sub2api' ? 'sub2api' : 'cpaauth';
 }
@@ -183,6 +301,1480 @@ function normalizeMailProvider(rawValue) {
 
 function isSub2apiOauthProvider(state) {
   return normalizeOauthProvider(state?.oauthProvider) === 'sub2api';
+}
+
+const HEROSMS_STUB_ENDPOINT = 'https://hero-sms.com/stubs/handler_api.php';
+const HEROSMS_SERVICE_KEYWORDS = ['openai'];
+const HEROSMS_OPENAI_ALIAS_CODES = ['dr'];
+const HEROSMS_ACTIVATION_STATUS_READY = '1';
+const HEROSMS_ACTIVATION_STATUS_COMPLETE = '6';
+const HEROSMS_ACTIVATION_STATUS_CANCEL = '8';
+const HEROSMS_SMS_POLL_MAX_ATTEMPTS = 24;
+const HEROSMS_SMS_POLL_INTERVAL_MS = 5000;
+
+function normalizeHeroSmsApiKey(rawValue) {
+  return String(rawValue || '').trim();
+}
+
+function normalizeHeroSmsServiceCode(rawValue) {
+  return String(rawValue || '').trim().toLowerCase();
+}
+
+function normalizeHeroSmsOperator(rawValue) {
+  return String(rawValue || '').trim().toLowerCase();
+}
+
+function normalizeHeroSmsMaxPrice(rawValue) {
+  const value = String(rawValue ?? '').trim().replace(',', '.');
+  if (!value) return '';
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '';
+  return numeric.toFixed(6).replace(/\.?0+$/, '');
+}
+
+function parseHeroSmsErrorFromText(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) return '';
+
+  const knownErrorPrefixes = [
+    'NO_KEY',
+    'BAD_KEY',
+    'BAD_ACTION',
+    'BAD_SERVICE',
+    'BAD_STATUS',
+    'BANNED',
+    'ERROR_SQL',
+    'NO_NUMBERS',
+    'NO_BALANCE',
+    'NO_MONEY',
+    'ACCOUNT_BLOCKED',
+    'STATUS_CANCEL',
+  ];
+
+  const upperValue = value.toUpperCase();
+  for (const prefix of knownErrorPrefixes) {
+    if (upperValue.startsWith(prefix)) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+function tryParseHeroSmsJson(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+async function requestHeroSmsStubAction(state, action, params = {}) {
+  const apiKey = normalizeHeroSmsApiKey(state?.heroSmsApiKey);
+  if (!apiKey) {
+    throw new Error('HeroSMS API Key is empty.');
+  }
+
+  const url = new URL(HEROSMS_STUB_ENDPOINT);
+  url.searchParams.set('api_key', apiKey);
+  url.searchParams.set('action', String(action || '').trim());
+
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null) continue;
+    const normalized = String(value).trim();
+    if (!normalized) continue;
+    url.searchParams.set(key, normalized);
+  }
+
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+      },
+    });
+  } catch (err) {
+    throw new Error(`HeroSMS request failed: ${getErrorMessage(err)}`);
+  }
+
+  const text = String(await response.text() || '').trim();
+  if (!response.ok) {
+    throw new Error(`HeroSMS request failed: ${response.status} ${response.statusText}${text ? ` ${text}` : ''}`.trim());
+  }
+
+  const knownError = parseHeroSmsErrorFromText(text);
+  if (knownError) {
+    throw new Error(`HeroSMS error: ${knownError}`);
+  }
+
+  return text;
+}
+
+function normalizeHeroSmsCountryRecord(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object') return null;
+
+  const id = normalizeHeroSmsCountryId(rawValue.id || rawValue.countryId || rawValue.country);
+  if (!id) return null;
+
+  const eng = String(rawValue.eng || rawValue.english || '').trim();
+  const chn = String(rawValue.chn || rawValue.chinese || '').trim();
+  const rus = String(rawValue.rus || rawValue.russian || '').trim();
+  const dialCode = normalizeHeroSmsDialCode(
+    rawValue.dialCode
+    || rawValue.phoneCode
+    || rawValue.phone_code
+    || rawValue.prefix
+  );
+
+  return {
+    id,
+    eng,
+    chn,
+    rus,
+    dialCode,
+    displayName: String(rawValue.displayName || chn || eng || rus || `#${id}`).trim(),
+  };
+}
+
+function normalizeHeroSmsCountriesPayload(rawPayload) {
+  const records = [];
+
+  if (Array.isArray(rawPayload)) {
+    records.push(...rawPayload);
+  } else if (rawPayload && typeof rawPayload === 'object') {
+    if (Array.isArray(rawPayload.countries)) {
+      records.push(...rawPayload.countries);
+    } else {
+      for (const [key, value] of Object.entries(rawPayload)) {
+        if (!value || typeof value !== 'object') continue;
+        records.push({ id: key, ...value });
+      }
+    }
+  }
+
+  const normalized = records
+    .map(item => normalizeHeroSmsCountryRecord(item))
+    .filter(Boolean);
+
+  const deduped = new Map();
+  for (const item of normalized) {
+    deduped.set(item.id, item);
+  }
+
+  return [...deduped.values()].sort((left, right) => left.id - right.id);
+}
+
+function normalizeHeroSmsServiceRecord(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object') return null;
+
+  const code = String(rawValue.code || rawValue.service || rawValue.id || '').trim().toLowerCase();
+  if (!code) return null;
+
+  const name = String(rawValue.name || rawValue.title || code).trim();
+  return { code, name };
+}
+
+function normalizeHeroSmsServicesPayload(rawPayload) {
+  let services = [];
+
+  if (Array.isArray(rawPayload)) {
+    services = rawPayload;
+  } else if (rawPayload && typeof rawPayload === 'object') {
+    if (Array.isArray(rawPayload.services)) {
+      services = rawPayload.services;
+    } else if (rawPayload.services && typeof rawPayload.services === 'object') {
+      services = Object.entries(rawPayload.services).map(([code, name]) => ({ code, name }));
+    }
+  }
+
+  const normalized = services
+    .map(item => normalizeHeroSmsServiceRecord(item))
+    .filter(Boolean);
+
+  const deduped = new Map();
+  for (const service of normalized) {
+    deduped.set(service.code, service);
+  }
+
+  return [...deduped.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function isHeroSmsOpenAiService(service) {
+  if (!service || typeof service !== 'object') return false;
+
+  const code = String(service.code || '').trim().toLowerCase();
+  const name = String(service.name || '').trim().toLowerCase();
+  if (!code && !name) return false;
+
+  if (HEROSMS_OPENAI_ALIAS_CODES.includes(code)) {
+    return true;
+  }
+
+  const normalized = `${code} ${name}`.trim();
+  return HEROSMS_SERVICE_KEYWORDS.some(keyword => normalized.includes(keyword));
+}
+
+function resolveHeroSmsOpenAiService(state, services = []) {
+  const preferredCode = String(state?.heroSmsServiceCode || '').trim().toLowerCase();
+  const normalizedServices = Array.isArray(services) ? services : [];
+  const openAiServices = normalizedServices.filter(item => isHeroSmsOpenAiService(item));
+
+  if (preferredCode && openAiServices.length) {
+    const preferredMatch = openAiServices.find(item => item.code === preferredCode);
+    if (preferredMatch) {
+      return preferredMatch;
+    }
+  }
+
+  const byStrictKeyword = openAiServices.find((service) => {
+    const value = `${service.code} ${service.name}`.toLowerCase();
+    return value.includes('openai');
+  });
+  if (byStrictKeyword) return byStrictKeyword;
+
+  const byAliasCode = openAiServices.find(service => HEROSMS_OPENAI_ALIAS_CODES.includes(service.code));
+  if (byAliasCode) return byAliasCode;
+
+  if (openAiServices.length) {
+    return openAiServices[0];
+  }
+
+  return null;
+}
+
+function extractHeroSmsPriceRecord(node, serviceCode = '') {
+  if (!node || typeof node !== 'object') return null;
+
+  if (Number.isFinite(Number(node.cost))) {
+    const cost = Number(node.cost);
+    const count = Number(node.count);
+    const physicalCount = Number(node.physicalCount);
+    return {
+      cost,
+      count: Number.isFinite(count) ? Math.trunc(count) : null,
+      physicalCount: Number.isFinite(physicalCount) ? Math.trunc(physicalCount) : null,
+    };
+  }
+
+  if (serviceCode && node[serviceCode] && typeof node[serviceCode] === 'object') {
+    return extractHeroSmsPriceRecord(node[serviceCode], '');
+  }
+
+  for (const value of Object.values(node)) {
+    if (!value || typeof value !== 'object') continue;
+    const nested = extractHeroSmsPriceRecord(value, '');
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+function parseHeroSmsPriceMapByCountry(rawPayload, serviceCode = '') {
+  const map = new Map();
+  if (!rawPayload || typeof rawPayload !== 'object') return map;
+
+  const sourceEntries = Array.isArray(rawPayload)
+    ? rawPayload.flatMap(item => (item && typeof item === 'object' ? Object.entries(item) : []))
+    : Object.entries(rawPayload);
+
+  for (const [countryKey, serviceMap] of sourceEntries) {
+    const countryId = normalizeHeroSmsCountryId(countryKey);
+    if (!countryId) continue;
+
+    const priceRecord = extractHeroSmsPriceRecord(serviceMap, serviceCode);
+    if (!priceRecord) continue;
+    map.set(countryId, priceRecord);
+  }
+
+  return map;
+}
+
+function parseHeroSmsOperatorsPayload(rawPayload, countryId = 0) {
+  const normalizedCountryId = normalizeHeroSmsCountryId(countryId);
+  let operators = [];
+
+  if (Array.isArray(rawPayload)) {
+    operators = rawPayload;
+  } else if (rawPayload && typeof rawPayload === 'object') {
+    if (rawPayload.countryOperators && typeof rawPayload.countryOperators === 'object') {
+      const map = rawPayload.countryOperators;
+      const countryKey = String(normalizedCountryId || '');
+      if (countryKey && Array.isArray(map[countryKey])) {
+        operators = map[countryKey];
+      } else {
+        operators = Object.values(map).flatMap(item => (Array.isArray(item) ? item : []));
+      }
+    } else if (Array.isArray(rawPayload.operators)) {
+      operators = rawPayload.operators;
+    }
+  }
+
+  const unique = new Set();
+  for (const item of operators) {
+    const operator = normalizeHeroSmsOperator(item);
+    if (!operator) continue;
+    unique.add(operator);
+  }
+
+  return [...unique.values()].sort((left, right) => left.localeCompare(right));
+}
+
+function normalizeHeroSmsTierCount(rawValue) {
+  const count = Number(rawValue);
+  if (!Number.isFinite(count) || count < 0) return null;
+  return Math.trunc(count);
+}
+
+function pushHeroSmsTierEntry(bucket = [], priceRaw, countRaw = null) {
+  const price = Number(String(priceRaw ?? '').trim().replace(',', '.'));
+  if (!Number.isFinite(price) || price <= 0) return;
+
+  bucket.push({
+    price,
+    count: normalizeHeroSmsTierCount(countRaw),
+  });
+}
+
+function collectHeroSmsTierEntries(rawMap, bucket = []) {
+  if (!rawMap || typeof rawMap !== 'object') {
+    return bucket;
+  }
+
+  if (Array.isArray(rawMap)) {
+    for (const item of rawMap) {
+      if (!item || typeof item !== 'object') continue;
+
+      const itemPrice = item.price ?? item.cost ?? item.value ?? item.bid ?? item.rate ?? item.maxPrice;
+      if (itemPrice !== undefined) {
+        const itemCount = item.count ?? item.quantity ?? item.total ?? item.available ?? item.amount ?? item.cnt;
+        pushHeroSmsTierEntry(bucket, itemPrice, itemCount);
+      }
+
+      collectHeroSmsTierEntries(item, bucket);
+    }
+    return bucket;
+  }
+
+  for (const [key, value] of Object.entries(rawMap)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const nestedPrice = value.price ?? value.cost ?? value.value ?? value.bid ?? value.rate ?? value.maxPrice;
+      const nestedCount = value.count ?? value.quantity ?? value.total ?? value.available ?? value.amount ?? value.cnt;
+      if (nestedPrice !== undefined) {
+        pushHeroSmsTierEntry(bucket, nestedPrice, nestedCount);
+      } else {
+        pushHeroSmsTierEntry(bucket, key, nestedCount);
+      }
+
+      collectHeroSmsTierEntries(value, bucket);
+      continue;
+    }
+
+    pushHeroSmsTierEntry(bucket, key, value);
+  }
+
+  return bucket;
+}
+
+function mergeHeroSmsPriceEntries(entries = []) {
+  const priceMap = new Map();
+
+  for (const entry of entries) {
+    const price = Number(entry?.price);
+    if (!Number.isFinite(price) || price <= 0) continue;
+
+    const key = price.toFixed(6);
+    if (!priceMap.has(key)) {
+      priceMap.set(key, {
+        price,
+        count: null,
+      });
+    }
+
+    const target = priceMap.get(key);
+    const count = Number(entry?.count);
+    if (Number.isFinite(count) && count >= 0) {
+      target.count = (Number.isFinite(target.count) ? target.count : 0) + Math.trunc(count);
+    }
+  }
+
+  return [...priceMap.values()].sort((left, right) => right.price - left.price);
+}
+
+function collectHeroSmsTopCountryPriceEntries(rawNode, targetCountryId, bucket = [], hintedCountryId = 0, targetServiceCode = '') {
+  if (!rawNode || typeof rawNode !== 'object') {
+    return bucket;
+  }
+
+  const normalizedServiceCode = normalizeHeroSmsServiceCode(targetServiceCode);
+
+  if (!Array.isArray(rawNode) && normalizedServiceCode) {
+    const directServiceBranch = rawNode[normalizedServiceCode];
+    if (directServiceBranch && typeof directServiceBranch === 'object') {
+      collectHeroSmsTopCountryPriceEntries(directServiceBranch, targetCountryId, bucket, hintedCountryId, '');
+      return bucket;
+    }
+
+    const nodeServiceCode = normalizeHeroSmsServiceCode(
+      rawNode.service
+      || rawNode.serviceCode
+      || rawNode.code
+    );
+    if (nodeServiceCode && nodeServiceCode !== normalizedServiceCode) {
+      return bucket;
+    }
+  }
+
+  if (Array.isArray(rawNode)) {
+    for (const item of rawNode) {
+      collectHeroSmsTopCountryPriceEntries(item, targetCountryId, bucket, hintedCountryId, targetServiceCode);
+    }
+    return bucket;
+  }
+
+  const nodeCountryId = normalizeHeroSmsCountryId(
+    rawNode.country
+    || rawNode.countryId
+    || hintedCountryId
+  );
+  const isTargetCountry = !targetCountryId || (nodeCountryId && nodeCountryId === targetCountryId);
+
+  if (isTargetCountry) {
+    const tierSources = [
+      rawNode.physicalPriceMap,
+      rawNode.priceMap,
+      rawNode.prices,
+      rawNode.priceList,
+      rawNode.price_list,
+      rawNode.bids,
+    ];
+
+    for (const source of tierSources) {
+      if (source && typeof source === 'object') {
+        collectHeroSmsTierEntries(source, bucket);
+      }
+    }
+  }
+
+  if (isTargetCountry) {
+    const fallbackPrice = Number(rawNode.price ?? rawNode.retail_price ?? rawNode.cost);
+    if (Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+      const fallbackCount = Number(rawNode.count ?? rawNode.physicalCountForDefaultPrice ?? rawNode.physicalTotalCount);
+      bucket.push({
+        price: fallbackPrice,
+        count: Number.isFinite(fallbackCount) ? Math.max(0, Math.trunc(fallbackCount)) : null,
+      });
+    }
+  }
+
+  for (const [key, value] of Object.entries(rawNode)) {
+    if (!value || typeof value !== 'object') continue;
+
+    if (
+      key === 'physicalPriceMap'
+      || key === 'priceMap'
+      || key === 'prices'
+      || key === 'priceList'
+      || key === 'price_list'
+      || key === 'bids'
+    ) {
+      continue;
+    }
+
+    let nextHintedCountryId = nodeCountryId || hintedCountryId;
+    if (/^\d+$/.test(String(key))) {
+      const keyedCountryId = normalizeHeroSmsCountryId(key);
+      if (keyedCountryId) {
+        nextHintedCountryId = keyedCountryId;
+      }
+    }
+
+    collectHeroSmsTopCountryPriceEntries(value, targetCountryId, bucket, nextHintedCountryId, targetServiceCode);
+  }
+
+  return bucket;
+}
+
+function parseHeroSmsTopCountriesPriceOptions(rawPayload, countryId = 0, serviceCode = '') {
+  const targetCountryId = normalizeHeroSmsCountryId(countryId);
+  const entries = collectHeroSmsTopCountryPriceEntries(rawPayload, targetCountryId, [], 0, serviceCode);
+  return mergeHeroSmsPriceEntries(entries);
+}
+
+function collectHeroSmsPriceEntriesByCountry(rawNode, targetCountryId, targetServiceCode = '', bucket = [], hintedCountryId = 0) {
+  if (!rawNode || typeof rawNode !== 'object') {
+    return bucket;
+  }
+
+  const normalizedServiceCode = normalizeHeroSmsServiceCode(targetServiceCode);
+
+  if (!Array.isArray(rawNode) && normalizedServiceCode) {
+    const directServiceBranch = rawNode[normalizedServiceCode];
+    if (directServiceBranch && typeof directServiceBranch === 'object') {
+      collectHeroSmsPriceEntriesByCountry(directServiceBranch, targetCountryId, '', bucket, hintedCountryId);
+      return bucket;
+    }
+
+    const nodeServiceCode = normalizeHeroSmsServiceCode(
+      rawNode.service
+      || rawNode.serviceCode
+      || rawNode.code
+    );
+    if (nodeServiceCode && nodeServiceCode !== normalizedServiceCode) {
+      return bucket;
+    }
+  }
+
+  if (Array.isArray(rawNode)) {
+    for (const item of rawNode) {
+      collectHeroSmsPriceEntriesByCountry(item, targetCountryId, targetServiceCode, bucket, hintedCountryId);
+    }
+    return bucket;
+  }
+
+  const nodeCountryId = normalizeHeroSmsCountryId(
+    rawNode.country
+    || rawNode.countryId
+    || rawNode.country_code
+    || hintedCountryId
+  );
+  const isTargetCountry = !targetCountryId || (nodeCountryId && nodeCountryId === targetCountryId);
+
+  if (isTargetCountry) {
+    pushHeroSmsTierEntry(
+      bucket,
+      rawNode.cost ?? rawNode.price ?? rawNode.retail_price,
+      rawNode.count ?? rawNode.quantity ?? rawNode.total ?? rawNode.available
+    );
+
+    const tierSources = [
+      rawNode.physicalPriceMap,
+      rawNode.priceMap,
+      rawNode.prices,
+      rawNode.priceList,
+      rawNode.price_list,
+      rawNode.bids,
+    ];
+
+    for (const source of tierSources) {
+      if (source && typeof source === 'object') {
+        collectHeroSmsTierEntries(source, bucket);
+      }
+    }
+  }
+
+  for (const [key, value] of Object.entries(rawNode)) {
+    if (value && typeof value === 'object') {
+      let nextHintedCountryId = nodeCountryId || hintedCountryId;
+      if (/^\d+$/.test(String(key))) {
+        const keyedCountryId = normalizeHeroSmsCountryId(key);
+        if (keyedCountryId) {
+          nextHintedCountryId = keyedCountryId;
+        }
+      }
+
+      collectHeroSmsPriceEntriesByCountry(value, targetCountryId, targetServiceCode, bucket, nextHintedCountryId);
+      continue;
+    }
+
+    if (!isTargetCountry) {
+      continue;
+    }
+
+    const numericKeyPrice = Number(String(key || '').trim().replace(',', '.'));
+    if (Number.isFinite(numericKeyPrice) && numericKeyPrice > 0) {
+      pushHeroSmsTierEntry(bucket, numericKeyPrice, value);
+    }
+  }
+
+  return bucket;
+}
+
+function parseHeroSmsPriceOptionsByCountry(rawPayload, countryId = 0, serviceCode = '') {
+  const targetCountryId = normalizeHeroSmsCountryId(countryId);
+  const entries = collectHeroSmsPriceEntriesByCountry(rawPayload, targetCountryId, serviceCode, [], 0);
+  return mergeHeroSmsPriceEntries(entries);
+}
+
+function parseHeroSmsBalance(rawText) {
+  const value = String(rawText || '').trim();
+  const matched = value.match(/ACCESS_BALANCE\s*:?\s*([0-9]+(?:\.[0-9]+)?)/i);
+  if (matched) {
+    return matched[1];
+  }
+
+  if (Number.isFinite(Number(value))) {
+    return String(Number(value));
+  }
+
+  return '';
+}
+
+function parseHeroSmsMinActivationSeconds(rawText) {
+  const value = String(rawText || '');
+  const matched = value.match(/minActivationTime"?\s*[:=]\s*(\d{1,5})/i);
+  if (matched) {
+    const seconds = Number(matched[1]);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.trunc(seconds);
+    }
+  }
+  return 120;
+}
+
+function buildHeroSmsServiceCandidates(state, extraCodes = []) {
+  const preferredCode = String(state?.heroSmsServiceCode || '').trim().toLowerCase();
+  const normalizedExtra = Array.isArray(extraCodes)
+    ? extraCodes.map(code => String(code || '').trim().toLowerCase())
+    : [];
+
+  return [
+    preferredCode,
+    ...normalizedExtra,
+  ].filter((code, index, list) => code && list.indexOf(code) === index);
+}
+
+function normalizeHeroSmsActivationId(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) return '';
+  const digitsOnly = value.replace(/\D/g, '');
+  return digitsOnly || value;
+}
+
+function normalizeHeroSmsPhoneNumber(rawValue) {
+  const value = String(rawValue || '').trim();
+  if (!value) return '';
+
+  const hasPlus = value.startsWith('+');
+  const digits = value.replace(/\D/g, '');
+  if (!digits) return '';
+  return hasPlus ? `+${digits}` : digits;
+}
+
+function maskHeroSmsPhoneNumber(rawValue) {
+  const digits = String(rawValue || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length <= 6) return digits;
+  return `${digits.slice(0, 3)}***${digits.slice(-3)}`;
+}
+
+function parseHeroSmsGetNumberResponse(rawText) {
+  const value = String(rawText || '').trim();
+  if (!value) return null;
+
+  const textMatch = value.match(/^ACCESS_NUMBER\s*:?\s*([^:]+)\s*:\s*(.+)$/i);
+  if (textMatch) {
+    const activationId = normalizeHeroSmsActivationId(textMatch[1]);
+    const phoneNumber = normalizeHeroSmsPhoneNumber(textMatch[2]);
+    if (activationId && phoneNumber) {
+      return {
+        activationId,
+        phoneNumber,
+        raw: value,
+      };
+    }
+  }
+
+  const jsonPayload = tryParseHeroSmsJson(value);
+  if (jsonPayload && typeof jsonPayload === 'object') {
+    const activationId = normalizeHeroSmsActivationId(
+      jsonPayload.activationId
+      || jsonPayload.id
+      || jsonPayload.requestId
+    );
+    const phoneNumber = normalizeHeroSmsPhoneNumber(
+      jsonPayload.phoneNumber
+      || jsonPayload.phone
+      || jsonPayload.number
+      || jsonPayload.msisdn
+    );
+
+    if (activationId && phoneNumber) {
+      return {
+        activationId,
+        phoneNumber,
+        raw: value,
+      };
+    }
+  }
+
+  return null;
+}
+
+function parseHeroSmsActivationStatus(rawText) {
+  const value = String(rawText || '').trim();
+  if (!value) {
+    return { state: 'unknown', raw: '' };
+  }
+
+  const statusOkMatch = value.match(/^STATUS_OK\s*:?\s*([0-9]{3,10})$/i);
+  if (statusOkMatch) {
+    return {
+      state: 'code',
+      code: statusOkMatch[1],
+      raw: value,
+    };
+  }
+
+  if (/^STATUS_WAIT/i.test(value)) {
+    return { state: 'wait', raw: value };
+  }
+
+  if (/^STATUS_CANCEL/i.test(value) || /^ACCESS_CANCEL/i.test(value) || /^NO_ACTIVATION/i.test(value)) {
+    return { state: 'cancel', raw: value };
+  }
+
+  const directCodeMatch = value.match(/\b([0-9]{4,10})\b/);
+  if (directCodeMatch && !/^STATUS_/i.test(value)) {
+    return {
+      state: 'code',
+      code: directCodeMatch[1],
+      raw: value,
+    };
+  }
+
+  return { state: 'unknown', raw: value };
+}
+
+async function resolveHeroSmsServiceCodeFromApi(state) {
+  const servicesRaw = await requestHeroSmsStubAction(state, 'getServicesList', { lang: 'cn' });
+  const servicesPayload = tryParseHeroSmsJson(servicesRaw);
+  if (!servicesPayload) {
+    throw new Error(`HeroSMS getServicesList returned non-JSON response: ${servicesRaw}`);
+  }
+
+  const services = normalizeHeroSmsServicesPayload(servicesPayload);
+  const targetService = resolveHeroSmsOpenAiService(state, services);
+  if (!targetService?.code) {
+    throw new Error('Failed to locate OpenAI/ChatGPT/Codex service in HeroSMS service list.');
+  }
+
+  const updates = {
+    heroSmsServiceCode: targetService.code,
+  };
+  await setState(updates);
+  await persistSettingsIfNeeded(updates);
+
+  return targetService.code;
+}
+
+async function requestHeroSmsActivationNumber(state, countryId) {
+  const normalizedCountryId = normalizeHeroSmsCountryId(countryId);
+  if (!normalizedCountryId) {
+    throw new Error('HeroSMS region is not selected.');
+  }
+
+  const selectedOperator = normalizeHeroSmsOperator(state?.heroSmsOperator);
+  const selectedMaxPrice = normalizeHeroSmsMaxPrice(state?.heroSmsMaxPrice);
+  const selectedFixedPrice = Boolean(state?.heroSmsFixedPrice);
+
+  const resolvedServiceCode = await resolveHeroSmsServiceCodeFromApi(state);
+
+  const customFilters = [];
+  if (selectedOperator) {
+    customFilters.push(`operator=${selectedOperator}`);
+  }
+  if (selectedMaxPrice) {
+    customFilters.push(`${selectedFixedPrice ? 'fixedPrice' : 'maxPrice'}=${selectedMaxPrice}`);
+  }
+  if (customFilters.length) {
+    await addLog(`HeroSMS: using custom filters for ${resolvedServiceCode} (${customFilters.join(', ')})`, 'info');
+  }
+
+  const triedServiceCodes = new Set();
+  let lastError = null;
+
+  async function tryGetNumberByService(serviceCode) {
+    if (!serviceCode || triedServiceCodes.has(serviceCode)) {
+      return null;
+    }
+    triedServiceCodes.add(serviceCode);
+
+    try {
+      const requestParams = {
+        service: serviceCode,
+        country: normalizedCountryId,
+      };
+
+      if (selectedOperator) {
+        requestParams.operator = selectedOperator;
+      }
+      if (selectedMaxPrice) {
+        requestParams.maxPrice = selectedMaxPrice;
+        if (selectedFixedPrice) {
+          requestParams.fixedPrice = 'true';
+        }
+      }
+
+      const numberRaw = await requestHeroSmsStubAction(state, 'getNumber', requestParams);
+      const parsed = parseHeroSmsGetNumberResponse(numberRaw);
+      if (!parsed) {
+        throw new Error(`HeroSMS getNumber returned unexpected response: ${numberRaw}`);
+      }
+
+      const updates = {
+        heroSmsServiceCode: serviceCode,
+      };
+      await setState(updates);
+      await persistSettingsIfNeeded(updates);
+
+      return {
+        ...parsed,
+        serviceCode,
+      };
+    } catch (err) {
+      lastError = err;
+      const message = getErrorMessage(err);
+      if (/NO_BALANCE|NO_MONEY|BAD_KEY|BANNED|ACCOUNT_BLOCKED/i.test(message)) {
+        throw err;
+      }
+      return null;
+    }
+  }
+
+  const candidateCodes = buildHeroSmsServiceCandidates({ heroSmsServiceCode: resolvedServiceCode });
+  for (const serviceCode of candidateCodes) {
+    const result = await tryGetNumberByService(serviceCode);
+    if (result) return result;
+  }
+
+  throw new Error(
+    `HeroSMS getNumber failed for OpenAI service ${resolvedServiceCode} in country #${normalizedCountryId}${lastError ? `: ${getErrorMessage(lastError)}` : ''}`
+  );
+}
+
+async function setHeroSmsActivationStatus(state, activationId, status, options = {}) {
+  const normalizedActivationId = normalizeHeroSmsActivationId(activationId);
+  const normalizedStatus = String(status || '').trim();
+  if (!normalizedActivationId || !normalizedStatus) return '';
+
+  try {
+    return await requestHeroSmsStubAction(state, 'setStatus', {
+      id: normalizedActivationId,
+      status: normalizedStatus,
+    });
+  } catch (err) {
+    const message = getErrorMessage(err);
+
+    if (normalizedStatus === HEROSMS_ACTIVATION_STATUS_CANCEL && /EARLY_CANCEL_DENIED|minActivationTime/i.test(message)) {
+      const minSeconds = parseHeroSmsMinActivationSeconds(message);
+      if (!options.silent) {
+        await addLog(
+          `HeroSMS cancel denied for activation ${normalizedActivationId}: minimum active time is ${minSeconds}s.`,
+          'warn'
+        );
+      }
+      if (options.ignoreError) {
+        return '';
+      }
+    }
+
+    if (!options.silent) {
+      await addLog(
+        `HeroSMS setStatus(${normalizedStatus}) failed for activation ${normalizedActivationId}: ${message}`,
+        'warn'
+      );
+    }
+    if (options.ignoreError) {
+      return '';
+    }
+    throw err;
+  }
+}
+
+async function pollHeroSmsActivationCode(state, activationId, options = {}) {
+  const step = Number(options.step || 6);
+  const normalizedActivationId = normalizeHeroSmsActivationId(activationId);
+  if (!normalizedActivationId) {
+    throw new Error('HeroSMS activation id is missing.');
+  }
+
+  const maxAttempts = Math.max(1, Number(options.maxAttempts || HEROSMS_SMS_POLL_MAX_ATTEMPTS));
+  const intervalMs = Math.max(1000, Number(options.intervalMs || HEROSMS_SMS_POLL_INTERVAL_MS));
+  let lastStatusRaw = '';
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    throwIfStopped();
+
+    let statusRaw = '';
+    try {
+      statusRaw = await requestHeroSmsStubAction(state, 'getStatus', {
+        id: normalizedActivationId,
+      });
+    } catch (err) {
+      const message = getErrorMessage(err);
+      if (/STATUS_CANCEL|ACCESS_CANCEL|NO_ACTIVATION/i.test(message)) {
+        throw new Error(`HeroSMS activation was cancelled: ${message}`);
+      }
+      throw err;
+    }
+
+    const parsedStatus = parseHeroSmsActivationStatus(statusRaw);
+    lastStatusRaw = parsedStatus.raw || statusRaw;
+
+    if (parsedStatus.state === 'code' && parsedStatus.code) {
+      return parsedStatus.code;
+    }
+
+    if (parsedStatus.state === 'cancel') {
+      throw new Error(`HeroSMS activation was cancelled: ${parsedStatus.raw || 'STATUS_CANCEL'}`);
+    }
+
+    if (typeof options.onStatus === 'function') {
+      try {
+        await options.onStatus({
+          attempt,
+          maxAttempts,
+          status: parsedStatus.raw || 'STATUS_WAIT_CODE',
+          state: parsedStatus.state,
+        });
+      } catch {}
+    }
+
+    if (attempt === 1 || attempt === maxAttempts || attempt % 4 === 0) {
+      await addLog(
+        `Step ${step}: HeroSMS waiting SMS (${attempt}/${maxAttempts}) - ${parsedStatus.raw || 'STATUS_WAIT_CODE'}`
+      );
+    }
+
+    if (attempt < maxAttempts) {
+      await sleepWithStop(intervalMs);
+    }
+  }
+
+  const timeoutSec = Math.round((maxAttempts * intervalMs) / 1000);
+  throw new Error(`HeroSMS SMS code timeout after ${timeoutSec}s. Last status: ${lastStatusRaw || 'unknown'}`);
+}
+
+async function runHeroSmsPhoneVerificationFlow(state, options = {}) {
+  const step = Number(options.step || 6);
+
+  await updateHeroSmsRuntime({
+    state: 'running',
+    activationId: '',
+    maskedPhone: '',
+    detail: `Step ${step}: 准备 HeroSMS 手机验证...`,
+    error: '',
+  });
+
+  if (!state?.heroSmsEnabled) {
+    await updateHeroSmsRuntime({
+      state: 'failed',
+      detail: `Step ${step}: HeroSMS 未启用。`,
+      error: 'HeroSMS is disabled.',
+    });
+    throw new Error('HeroSMS is disabled.');
+  }
+
+  const countryId = normalizeHeroSmsCountryId(state.heroSmsCountryId || state.heroSmsCountryMeta?.id);
+  if (!countryId) {
+    await updateHeroSmsRuntime({
+      state: 'failed',
+      detail: `Step ${step}: 未选择 HeroSMS 地区。`,
+      error: 'HeroSMS region is not selected.',
+    });
+    throw new Error('HeroSMS region is not selected.');
+  }
+
+  const countryMeta = normalizeHeroSmsCountryMeta(state.heroSmsCountryMeta || { id: countryId });
+
+  let countryApplied = null;
+  let lastApplyError = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      countryApplied = await applyHeroSmsCountryToAddPhone(state);
+      if (countryApplied?.matched) {
+        break;
+      }
+    } catch (err) {
+      lastApplyError = err;
+    }
+
+    if (attempt < 3) {
+      await sleepWithStop(1200);
+    }
+  }
+
+  if (!countryApplied?.matched) {
+    const applyMessage = lastApplyError
+      ? getErrorMessage(lastApplyError)
+      : 'Could not detect add-phone country selector on current page.';
+    await updateHeroSmsRuntime({
+      state: 'failed',
+      detail: `Step ${step}: add-phone 地区匹配失败。`,
+      error: applyMessage,
+    });
+    if (lastApplyError) {
+      throw lastApplyError;
+    }
+    throw new Error('Could not detect add-phone country selector on current page.');
+  }
+
+  const selectedCountryLabel = countryApplied.selectedCountryLabel || countryMeta?.displayName || `#${countryId}`;
+
+  await addLog(
+    `Step ${step}: add-phone country selected: ${selectedCountryLabel}.`,
+    'ok'
+  );
+  await updateHeroSmsRuntime({
+    state: 'running',
+    detail: `Step ${step}: 已选择地区 ${selectedCountryLabel}。`,
+    error: '',
+  });
+
+  const activation = await requestHeroSmsActivationNumber(state, countryId);
+  const maskedPhone = maskHeroSmsPhoneNumber(activation.phoneNumber);
+  await addLog(
+    `Step ${step}: HeroSMS number acquired (${maskedPhone}), activation #${activation.activationId}, service ${activation.serviceCode}.`,
+    'ok'
+  );
+  await updateHeroSmsRuntime({
+    state: 'waiting_code',
+    activationId: activation.activationId,
+    maskedPhone,
+    detail: `Step ${step}: 已取号，正在提交手机号。`,
+    error: '',
+  });
+
+  let activationDone = false;
+  try {
+    const submitPhoneResponse = await sendToContentScript('signup-page', {
+      type: 'FILL_ADD_PHONE_NUMBER',
+      source: 'background',
+      payload: {
+        phoneNumber: activation.phoneNumber,
+        countryId,
+        countryMeta,
+        activationId: activation.activationId,
+        serviceCode: activation.serviceCode,
+      },
+    });
+
+    if (submitPhoneResponse?.error) {
+      throw new Error(submitPhoneResponse.error);
+    }
+    if (!submitPhoneResponse?.submitted && !submitPhoneResponse?.alreadyWaitingCode && !submitPhoneResponse?.codeSurface) {
+      throw new Error('HeroSMS phone number submission did not reach code input surface.');
+    }
+
+    await setHeroSmsActivationStatus(state, activation.activationId, HEROSMS_ACTIVATION_STATUS_READY, {
+      silent: true,
+      ignoreError: true,
+    });
+
+    await updateHeroSmsRuntime({
+      state: 'waiting_code',
+      activationId: activation.activationId,
+      maskedPhone,
+      detail: `Step ${step}: 手机号已提交，等待短信验证码。`,
+      error: '',
+    });
+
+    const smsCode = await pollHeroSmsActivationCode(state, activation.activationId, {
+      step,
+      onStatus: async ({ attempt, maxAttempts, status }) => {
+        if (attempt === 1 || attempt === maxAttempts || attempt % 2 === 0) {
+          await updateHeroSmsRuntime({
+            state: 'waiting_code',
+            activationId: activation.activationId,
+            maskedPhone,
+            detail: `Step ${step}: 等待短信 ${attempt}/${maxAttempts} (${status})`,
+            error: '',
+          });
+        }
+      },
+    });
+
+    await updateHeroSmsRuntime({
+      state: 'submitting_code',
+      activationId: activation.activationId,
+      maskedPhone,
+      detail: `Step ${step}: 已收到短信验证码，正在提交。`,
+      error: '',
+    });
+
+    const submitCodeResponse = await sendToContentScript('signup-page', {
+      type: 'FILL_ADD_PHONE_CODE',
+      source: 'background',
+      payload: { code: smsCode },
+    });
+
+    if (submitCodeResponse?.error) {
+      throw new Error(submitCodeResponse.error);
+    }
+    if (!submitCodeResponse?.submitted) {
+      throw new Error('HeroSMS SMS code submission was not confirmed by page script.');
+    }
+
+    await setHeroSmsActivationStatus(state, activation.activationId, HEROSMS_ACTIVATION_STATUS_COMPLETE, {
+      silent: true,
+      ignoreError: true,
+    });
+    activationDone = true;
+
+    await updateHeroSmsRuntime({
+      state: 'completed',
+      activationId: activation.activationId,
+      maskedPhone,
+      detail: `Step ${step}: 手机验证完成。`,
+      error: '',
+    });
+
+    await addLog(`Step ${step}: HeroSMS SMS code submitted successfully.`, 'ok');
+
+    return {
+      activationId: activation.activationId,
+      phoneNumber: activation.phoneNumber,
+      maskedPhone,
+      serviceCode: activation.serviceCode,
+      countryId,
+      selectedCountryLabel,
+    };
+  } catch (err) {
+    const errorMessage = getErrorMessage(err);
+    if (!activationDone) {
+      await setHeroSmsActivationStatus(state, activation.activationId, HEROSMS_ACTIVATION_STATUS_CANCEL, {
+        silent: true,
+        ignoreError: true,
+      });
+    }
+
+    await updateHeroSmsRuntime({
+      state: isStopError(err) ? 'cancelled' : 'failed',
+      activationId: activation.activationId,
+      maskedPhone,
+      detail: isStopError(err)
+        ? `Step ${step}: 流程已停止，号码已取消。`
+        : `Step ${step}: 手机验证失败。`,
+      error: isStopError(err) ? '' : errorMessage,
+    });
+
+    throw err;
+  }
+}
+
+async function fetchHeroSmsRegions(options = {}) {
+  const state = await getState();
+  void options;
+
+  if (!state.heroSmsEnabled) {
+    throw new Error('HeroSMS is disabled. Enable it in side panel first.');
+  }
+
+  const countriesRaw = await requestHeroSmsStubAction(state, 'getCountries');
+  const countriesPayload = tryParseHeroSmsJson(countriesRaw);
+  if (!countriesPayload) {
+    throw new Error(`HeroSMS getCountries returned non-JSON response: ${countriesRaw}`);
+  }
+
+  const countries = normalizeHeroSmsCountriesPayload(countriesPayload);
+  if (!countries.length) {
+    throw new Error('HeroSMS getCountries returned an empty list.');
+  }
+
+  const servicesRaw = await requestHeroSmsStubAction(state, 'getServicesList', { lang: 'cn' });
+  const servicesPayload = tryParseHeroSmsJson(servicesRaw);
+  if (!servicesPayload) {
+    throw new Error(`HeroSMS getServicesList returned non-JSON response: ${servicesRaw}`);
+  }
+
+  const services = normalizeHeroSmsServicesPayload(servicesPayload);
+  const targetService = resolveHeroSmsOpenAiService(state, services);
+  if (!targetService?.code) {
+    throw new Error('Failed to locate OpenAI/ChatGPT/Codex service in HeroSMS service list.');
+  }
+
+  let priceMap = new Map();
+
+  try {
+    const pricesRaw = await requestHeroSmsStubAction(state, 'getPrices', { service: targetService.code });
+    const pricesPayload = tryParseHeroSmsJson(pricesRaw);
+    if (pricesPayload) {
+      const parsedPriceMap = parseHeroSmsPriceMapByCountry(pricesPayload, targetService.code);
+      if (parsedPriceMap.size) {
+        priceMap = parsedPriceMap;
+      }
+    }
+  } catch {}
+
+  if (!priceMap.size) {
+    await addLog(`HeroSMS: OpenAI service ${targetService.code} returned no price map, using region list without cost sort hint.`, 'warn');
+  }
+
+  const mergedCountries = countries
+    .map((country) => {
+      const priced = priceMap.get(country.id);
+      return {
+        ...country,
+        cost: priced?.cost ?? null,
+        count: priced?.count ?? null,
+      };
+    })
+    .sort((left, right) => {
+      const leftCost = Number.isFinite(Number(left.cost)) ? Number(left.cost) : Number.POSITIVE_INFINITY;
+      const rightCost = Number.isFinite(Number(right.cost)) ? Number(right.cost) : Number.POSITIVE_INFINITY;
+      if (leftCost !== rightCost) return leftCost - rightCost;
+      return left.id - right.id;
+    });
+
+  const balanceRaw = await requestHeroSmsStubAction(state, 'getBalance');
+  const balance = parseHeroSmsBalance(balanceRaw);
+  const updates = {
+    heroSmsServiceCode: targetService.code,
+    heroSmsBalanceLabel: balance,
+  };
+  await setState(updates);
+  await persistSettingsIfNeeded(updates);
+
+  return {
+    countries: mergedCountries,
+    balance,
+    balanceLabel: balance,
+    serviceCode: targetService.code,
+    serviceName: targetService.name,
+    selectedCountryId: normalizeHeroSmsCountryId(state.heroSmsCountryId),
+  };
+}
+
+async function fetchHeroSmsCustomOptions(options = {}) {
+  const state = await getState();
+
+  if (!state.heroSmsEnabled) {
+    throw new Error('HeroSMS is disabled. Enable it in side panel first.');
+  }
+
+  const countryId = normalizeHeroSmsCountryId(options.countryId || state.heroSmsCountryId || state.heroSmsCountryMeta?.id);
+  if (!countryId) {
+    throw new Error('HeroSMS region is not selected.');
+  }
+
+  const serviceCode = await resolveHeroSmsServiceCodeFromApi(state);
+  const selectedOperator = normalizeHeroSmsOperator(state.heroSmsOperator);
+  let operators = [];
+  let priceOptions = [];
+  let tierPriceOptions = [];
+  let operatorError = '';
+  let priceError = '';
+  const tierCandidateEntries = [];
+
+  try {
+    const operatorsRaw = await requestHeroSmsStubAction(state, 'getOperators', { country: countryId });
+    const operatorsPayload = tryParseHeroSmsJson(operatorsRaw);
+    if (operatorsPayload) {
+      operators = parseHeroSmsOperatorsPayload(operatorsPayload, countryId);
+    }
+  } catch (err) {
+    operatorError = getErrorMessage(err);
+  }
+
+  const operatorProbeValues = [selectedOperator, 'any', ''];
+  const topRequestPlans = [];
+
+  for (const operator of operatorProbeValues) {
+    for (const freePrice of ['true', '1']) {
+      const topRankParams = {
+        service: serviceCode,
+        country: countryId,
+        freePrice,
+      };
+      const topParams = {
+        service: serviceCode,
+        country: countryId,
+        freePrice,
+      };
+
+      if (operator) {
+        topRankParams.operator = operator;
+        topParams.operator = operator;
+      }
+
+      topRequestPlans.push({ action: 'getTopCountriesByServiceRank', params: topRankParams });
+      topRequestPlans.push({ action: 'getTopCountriesByService', params: topParams });
+
+      const pricesByCountryParams = {
+        service: serviceCode,
+        country: countryId,
+        freePrice,
+      };
+      const pricesAllCountryParams = {
+        service: serviceCode,
+        freePrice,
+      };
+
+      if (operator) {
+        pricesByCountryParams.operator = operator;
+        pricesAllCountryParams.operator = operator;
+      }
+
+      topRequestPlans.push({ action: 'getPrices', params: pricesByCountryParams });
+      topRequestPlans.push({ action: 'getPrices', params: pricesAllCountryParams });
+    }
+  }
+
+  const dedupPlanMap = new Map();
+  for (const plan of topRequestPlans) {
+    const signature = `${plan.action}|${Object.entries(plan.params)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+      .map(([key, value]) => `${key}=${value}`)
+      .join('&')}`;
+    if (!dedupPlanMap.has(signature)) {
+      dedupPlanMap.set(signature, plan);
+    }
+  }
+
+  const dedupedTopRequestPlans = [...dedupPlanMap.values()];
+
+  for (const plan of dedupedTopRequestPlans) {
+    try {
+      const topRaw = await requestHeroSmsStubAction(state, plan.action, plan.params);
+      const topPayload = tryParseHeroSmsJson(topRaw);
+      if (!topPayload) {
+        continue;
+      }
+
+      const parsedTopTiers = /^getTopCountriesByService/i.test(plan.action)
+        ? parseHeroSmsTopCountriesPriceOptions(topPayload, countryId, serviceCode)
+        : [];
+      const parsedPriceTiers = plan.action === 'getPrices'
+        ? parseHeroSmsPriceOptionsByCountry(topPayload, countryId, serviceCode)
+        : [];
+      const parsedTiers = [...parsedTopTiers, ...parsedPriceTiers];
+
+      if (parsedTiers.length) {
+        tierCandidateEntries.push(...parsedTiers);
+      }
+    } catch {}
+  }
+
+  if (tierCandidateEntries.length) {
+    const tierMap = new Map();
+
+    for (const option of tierCandidateEntries) {
+      const price = Number(option?.price);
+      if (!Number.isFinite(price) || price <= 0) continue;
+
+      const key = price.toFixed(6);
+      if (!tierMap.has(key)) {
+        tierMap.set(key, {
+          price,
+          count: null,
+        });
+      }
+
+      const target = tierMap.get(key);
+      const count = Number(option?.count);
+      if (Number.isFinite(count) && count >= 0) {
+        target.count = (Number.isFinite(target.count) ? target.count : 0) + Math.trunc(count);
+      }
+    }
+
+    tierPriceOptions = [...tierMap.values()].sort((left, right) => right.price - left.price);
+  }
+
+  try {
+    const pricesRaw = await requestHeroSmsStubAction(state, 'getPrices', {
+      service: serviceCode,
+      country: countryId,
+    });
+    const pricesPayload = tryParseHeroSmsJson(pricesRaw);
+    if (pricesPayload) {
+      priceOptions = parseHeroSmsPriceOptionsByCountry(pricesPayload, countryId, serviceCode);
+    }
+  } catch (err) {
+    priceError = getErrorMessage(err);
+  }
+
+  if (tierPriceOptions.length) {
+    const merged = new Map();
+
+    for (const option of tierPriceOptions) {
+      const price = Number(option?.price);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      merged.set(price.toFixed(6), {
+        price,
+        count: Number.isFinite(Number(option?.count)) ? Math.max(0, Math.trunc(Number(option.count))) : null,
+      });
+    }
+
+    for (const option of priceOptions) {
+      const price = Number(option?.price);
+      if (!Number.isFinite(price) || price <= 0) continue;
+
+      const key = price.toFixed(6);
+      if (!merged.has(key)) {
+        merged.set(key, {
+          price,
+          count: Number.isFinite(Number(option?.count)) ? Math.max(0, Math.trunc(Number(option.count))) : null,
+        });
+      }
+    }
+
+    priceOptions = [...merged.values()].sort((left, right) => right.price - left.price);
+  }
+
+  if (!priceOptions.length) {
+    const fallbackMeta = normalizeHeroSmsCountryMeta(
+      options.countryMeta
+      || state.heroSmsCountryMeta
+      || { id: countryId }
+    );
+    const fallbackCost = Number(fallbackMeta?.cost);
+    const fallbackCount = Number(fallbackMeta?.count);
+    if (Number.isFinite(fallbackCost) && fallbackCost > 0) {
+      priceOptions = [{
+        price: fallbackCost,
+        count: Number.isFinite(fallbackCount) ? Math.max(0, Math.trunc(fallbackCount)) : null,
+      }];
+    }
+  }
+
+  if (!operators.length && !priceOptions.length && operatorError && priceError) {
+    throw new Error(`Failed to load HeroSMS custom options: operators(${operatorError}) prices(${priceError})`);
+  }
+
+  return {
+    countryId,
+    serviceCode,
+    operators,
+    priceOptions,
+    selectedOperator: normalizeHeroSmsOperator(state.heroSmsOperator),
+    selectedMaxPrice: normalizeHeroSmsMaxPrice(state.heroSmsMaxPrice),
+    selectedFixedPrice: Boolean(state.heroSmsFixedPrice),
+  };
+}
+
+async function applyHeroSmsCountryToAddPhone(state) {
+  if (!state?.heroSmsEnabled) {
+    return { matched: false };
+  }
+
+  const countryId = normalizeHeroSmsCountryId(state.heroSmsCountryId || state.heroSmsCountryMeta?.id);
+  if (!countryId) {
+    throw new Error('HeroSMS region is not selected.');
+  }
+
+  const countryMeta = normalizeHeroSmsCountryMeta(state.heroSmsCountryMeta || { id: countryId });
+  const response = await sendToContentScript('signup-page', {
+    type: 'SELECT_ADD_PHONE_COUNTRY',
+    source: 'background',
+    payload: {
+      countryId,
+      countryMeta,
+    },
+  });
+
+  if (response?.error) {
+    throw new Error(response.error);
+  }
+
+  return {
+    matched: Boolean(response?.matched),
+    selectedCountryLabel: String(response?.selectedCountryLabel || countryMeta?.displayName || `#${countryId}`),
+    selectedCountryValue: String(response?.selectedCountryValue || ''),
+  };
 }
 
 async function initializeSessionStorageAccess() {
@@ -208,6 +1800,20 @@ function broadcastDataUpdate(payload) {
     type: 'DATA_UPDATED',
     payload,
   }).catch(() => {});
+}
+
+async function updateHeroSmsRuntime(patch = {}, options = {}) {
+  const state = await getState();
+  const current = normalizeHeroSmsRuntime(state.heroSmsRuntime);
+  const next = normalizeHeroSmsRuntime({
+    ...(options.reset ? createHeroSmsRuntimeState() : current),
+    ...patch,
+    updatedAt: Date.now(),
+  });
+
+  await setState({ heroSmsRuntime: next });
+  broadcastDataUpdate({ heroSmsRuntime: next });
+  return next;
 }
 
 async function setEmailState(email) {
@@ -868,6 +2474,7 @@ async function reopenSignupForReplacementEmail(state) {
 }
 
 async function handleMicrosoftServiceAbuseDuringStep4(state, context = {}) {
+  const shouldRestartSignup = context.restartSignup !== false;
   const currentEmail = String(state.email || '').trim();
   const deleteBlocked = Boolean(state.deleteAbusedMicrosoftAccount);
 
@@ -927,6 +2534,10 @@ async function handleMicrosoftServiceAbuseDuringStep4(state, context = {}) {
     `Step 4: Switched to replacement email ${replacementEmail} (${context.round || 1}/${context.maxRounds || 1}).`,
     'ok'
   );
+
+  if (!shouldRestartSignup) {
+    return;
+  }
 
   const refreshed = await getState();
   await reopenSignupForReplacementEmail(refreshed);
@@ -1538,6 +3149,46 @@ async function handleMessage(message, sender) {
       if (message.payload.sub2apiSelectedGroupIds !== undefined) {
         updates.sub2apiSelectedGroupIds = normalizeSub2apiGroupIds(message.payload.sub2apiSelectedGroupIds);
       }
+      if (message.payload.heroSmsEnabled !== undefined) updates.heroSmsEnabled = Boolean(message.payload.heroSmsEnabled);
+      if (message.payload.heroSmsApiKey !== undefined) {
+        updates.heroSmsApiKey = normalizeHeroSmsApiKey(message.payload.heroSmsApiKey);
+        updates.heroSmsBalanceLabel = '';
+        updates.heroSmsServiceCode = '';
+      }
+      if (message.payload.heroSmsCountryId !== undefined) {
+        updates.heroSmsCountryId = normalizeHeroSmsCountryId(message.payload.heroSmsCountryId);
+      }
+      if (message.payload.heroSmsCountryMeta !== undefined) {
+        updates.heroSmsCountryMeta = normalizeHeroSmsCountryMeta(message.payload.heroSmsCountryMeta);
+      }
+      if (message.payload.heroSmsServiceCode !== undefined) {
+        updates.heroSmsServiceCode = String(message.payload.heroSmsServiceCode || '').trim().toLowerCase();
+      }
+      if (message.payload.heroSmsOperator !== undefined) {
+        updates.heroSmsOperator = normalizeHeroSmsOperator(message.payload.heroSmsOperator);
+      }
+      if (message.payload.heroSmsMaxPrice !== undefined) {
+        updates.heroSmsMaxPrice = normalizeHeroSmsMaxPrice(message.payload.heroSmsMaxPrice);
+      }
+      if (message.payload.heroSmsFixedPrice !== undefined) {
+        updates.heroSmsFixedPrice = Boolean(message.payload.heroSmsFixedPrice);
+      }
+      if (updates.heroSmsMaxPrice === '') {
+        updates.heroSmsFixedPrice = false;
+      }
+      if (updates.heroSmsCountryMeta && updates.heroSmsCountryId === undefined) {
+        updates.heroSmsCountryId = normalizeHeroSmsCountryId(updates.heroSmsCountryMeta.id);
+      }
+      if (updates.heroSmsCountryId === 0) {
+        updates.heroSmsCountryMeta = null;
+      }
+      const shouldResetHeroSmsRuntime =
+        (updates.heroSmsEnabled !== undefined && !updates.heroSmsEnabled)
+        || (updates.heroSmsApiKey !== undefined && !updates.heroSmsApiKey)
+        || (updates.heroSmsCountryId !== undefined && updates.heroSmsCountryId === 0);
+      if (shouldResetHeroSmsRuntime) {
+        updates.heroSmsRuntime = createHeroSmsRuntimeState();
+      }
       if (message.payload.deleteAbusedMicrosoftAccount !== undefined) updates.deleteAbusedMicrosoftAccount = Boolean(message.payload.deleteAbusedMicrosoftAccount);
       if (message.payload.customPassword !== undefined) updates.customPassword = message.payload.customPassword;
       if (message.payload.mailProvider !== undefined) updates.mailProvider = normalizeMailProvider(message.payload.mailProvider);
@@ -1548,6 +3199,9 @@ async function handleMessage(message, sender) {
       if (message.payload.microsoftManagerUseAliases !== undefined) updates.microsoftManagerUseAliases = Boolean(message.payload.microsoftManagerUseAliases);
       await setState(updates);
       await persistSettingsIfNeeded(updates);
+      if (updates.heroSmsRuntime !== undefined) {
+        broadcastDataUpdate({ heroSmsRuntime: updates.heroSmsRuntime });
+      }
       return { ok: true };
     }
 
@@ -1567,6 +3221,18 @@ async function handleMessage(message, sender) {
       clearStopRequest();
       const groups = await fetchSub2apiGroups();
       return { ok: true, groups };
+    }
+
+    case 'FETCH_HEROSMS_REGIONS': {
+      clearStopRequest();
+      const data = await fetchHeroSmsRegions(message.payload || {});
+      return { ok: true, ...data };
+    }
+
+    case 'FETCH_HEROSMS_CUSTOM_OPTIONS': {
+      clearStopRequest();
+      const data = await fetchHeroSmsCustomOptions(message.payload || {});
+      return { ok: true, ...data };
     }
 
     case 'STOP_FLOW': {
@@ -1598,13 +3264,13 @@ async function handleStepData(step, payload) {
     case 4:
       if (payload.emailTimestamp) await setState({ lastEmailTimestamp: payload.emailTimestamp });
       break;
-    case 6:
+    case 7:
       if (payload.localhostUrl) {
         await setState({ localhostUrl: payload.localhostUrl });
         broadcastDataUpdate({ localhostUrl: payload.localhostUrl });
       }
       break;
-    case 7:
+    case 8:
       await recordCompletedAccount();
       await markMicrosoftManagerEmailRegisteredAfterImport();
       break;
@@ -1686,6 +3352,17 @@ async function requestStop() {
   await addLog('Stop requested. Cancelling current operations...', 'warn');
   await broadcastStopToContentScripts();
 
+  try {
+    const runtime = normalizeHeroSmsRuntime((await getState()).heroSmsRuntime);
+    if (runtime.state === 'running' || runtime.state === 'waiting_code' || runtime.state === 'submitting_code') {
+      await updateHeroSmsRuntime({
+        state: 'cancelled',
+        detail: '流程已停止。',
+        error: '',
+      });
+    }
+  } catch {}
+
   for (const waiter of stepWaiters.values()) {
     waiter.reject(new Error(STOP_ERROR_MESSAGE));
   }
@@ -1733,8 +3410,9 @@ async function executeStep(step) {
       case 3: await executeStep3(state); break;
       case 4: await executeStep4(state); break;
       case 5: await executeStep5(state); break;
-      case 6: await executeStep6(state); break;
-      case 7: await executeStep7(state); break;
+      case 6: await executeStep6Profile(state); break;
+      case 7: await executeStep6(state, 7); break;
+      case 8: await executeStep7(state, 8); break;
       default:
         throw new Error(`Unknown step: ${step}`);
     }
@@ -1757,7 +3435,8 @@ async function executeStep(step) {
  */
 async function executeStepAndWait(step, delayAfter = 2000) {
   throwIfStopped();
-  const promise = waitForStepComplete(step, 120000);
+  const stepTimeoutMs = step === 5 ? 240000 : 120000;
+  const promise = waitForStepComplete(step, stepTimeoutMs);
   await executeStep(step);
   await promise;
   // Extra delay for page transitions / DOM updates
@@ -1795,9 +3474,10 @@ function getAutoStepDelay(step) {
     2: 1100,
     3: 1500,
     4: 1100,
-    5: 1500,
-    6: 900,
-    7: 700,
+    5: 900,
+    6: 1500,
+    7: 900,
+    8: 700,
   };
   return delayMap[step] || 0;
 }
@@ -2809,7 +4489,7 @@ function buildSub2apiAccountSettingsPayload(state, accountId) {
   return payload;
 }
 
-async function applySub2apiPostImportSettings(state, accountId, authCredential) {
+async function applySub2apiPostImportSettings(state, accountId, authCredential, stepNumber = 7) {
   const payload = buildSub2apiAccountSettingsPayload(state, accountId);
   const selectedGroups = Array.isArray(payload.group_ids) ? payload.group_ids.length : 0;
 
@@ -2835,7 +4515,7 @@ async function applySub2apiPostImportSettings(state, accountId, authCredential) 
       });
 
       await addLog(
-        `Step 7: Sub2API account #${accountId} settings updated (并发 ${SUB2API_POST_IMPORT_DEFAULTS.maxConcurrency} / 负载 ${SUB2API_POST_IMPORT_DEFAULTS.loadFactor} / 优先级 ${SUB2API_POST_IMPORT_DEFAULTS.priority} / 计费倍率 ${SUB2API_POST_IMPORT_DEFAULTS.billingMultiplier}; 分组 ${selectedGroups} 个)`,
+        `Step ${stepNumber}: Sub2API account #${accountId} settings updated (并发 ${SUB2API_POST_IMPORT_DEFAULTS.maxConcurrency} / 负载 ${SUB2API_POST_IMPORT_DEFAULTS.loadFactor} / 优先级 ${SUB2API_POST_IMPORT_DEFAULTS.priority} / 计费倍率 ${SUB2API_POST_IMPORT_DEFAULTS.billingMultiplier}; 分组 ${selectedGroups} 个)`,
         'ok'
       );
       return;
@@ -2852,7 +4532,7 @@ async function applySub2apiPostImportSettings(state, accountId, authCredential) 
 function parseOAuthCallbackParams(callbackUrl) {
   const value = String(callbackUrl || '').trim();
   if (!value) {
-    throw new Error('No callback URL. Complete step 6 first.');
+    throw new Error('No callback URL. Complete the OAuth confirm step first.');
   }
 
   let parsed;
@@ -2978,6 +4658,22 @@ async function executeStep4(state) {
 
   for (let round = 1; round <= maxSwitchRounds; round++) {
     const current = await getState();
+    const successSelectors = [
+      'input[name="name"]',
+      'input[placeholder*="全名"]',
+      '[role="spinbutton"][data-type="year"]',
+      'input[name="birthday"]',
+      'input[name="age"]',
+    ];
+    if (current.heroSmsEnabled) {
+      successSelectors.push(
+        'input[name="phone"]',
+        'input[type="tel"]',
+        'select[name="country"]',
+        'select[id*="country"]'
+      );
+    }
+
     const pollPayload = {
       filterAfterTimestamp: current.flowStartTime || state.flowStartTime || 0,
       senderFilters: ['openai', 'noreply', 'verify', 'auth', 'forward'],
@@ -2998,13 +4694,7 @@ async function executeStep4(state) {
           mail,
           pollPayload,
           successMessage: 'Got verification code',
-          successSelectors: [
-            'input[name="name"]',
-            'input[placeholder*="全名"]',
-            '[role="spinbutton"][data-type="year"]',
-            'input[name="birthday"]',
-            'input[name="age"]',
-          ],
+          successSelectors,
           customPoll: (currentPayload) => pollMicrosoftManagerCode(current, 4, currentPayload),
         });
         return;
@@ -3035,18 +4725,13 @@ async function executeStep4(state) {
         mail,
         pollPayload,
         successMessage: 'Got verification code',
-        successSelectors: [
-          'input[name="name"]',
-          'input[placeholder*="全名"]',
-          '[role="spinbutton"][data-type="year"]',
-          'input[name="birthday"]',
-          'input[name="age"]',
-        ],
+        successSelectors,
       });
       return;
     } catch (err) {
       const abuseError = isMicrosoftServiceAbuseError(err);
       const phoneChallengeError = isMicrosoftPhoneChallengeError(err);
+      const shouldAutoRecover = Boolean(current.autoRunning);
 
       if (!abuseError && !phoneChallengeError) {
         throw err;
@@ -3057,40 +4742,113 @@ async function executeStep4(state) {
       }
 
       if (phoneChallengeError) {
+        if (current.heroSmsEnabled) {
+          await addLog('Step 4: add-phone challenge detected. HeroSMS phone verification will run in step 5.', 'warn');
+          await completeBackgroundStep(4, {});
+          return;
+        }
+
         await handleMicrosoftPhoneChallengeDuringStep4(current, {
           round,
           maxRounds: maxSwitchRounds,
+          restartSignup: shouldAutoRecover,
         });
+        if (!shouldAutoRecover) {
+          throw new Error('Step 4: Detected add-phone challenge. Email has been marked and replaced. Please rerun from step 3.');
+        }
       } else {
         await handleMicrosoftServiceAbuseDuringStep4(current, {
           round,
           maxRounds: maxSwitchRounds,
+          restartSignup: shouldAutoRecover,
         });
+        if (!shouldAutoRecover) {
+          throw new Error('Step 4: Detected blocked-account abuse. Email has been handled and replaced. Please rerun from step 3.');
+        }
       }
     }
   }
 }
 
 // ============================================================
-// Step 5: Fill Name & Birthday (via signup-page.js)
+// Step 5: HeroSMS Phone Verification (add-phone)
 // ============================================================
 
 async function executeStep5(state) {
+  const current = state || await getState();
+
+  if (!current.heroSmsEnabled) {
+    await addLog('Step 5: HeroSMS is disabled, skipping phone verification step.', 'warn');
+    await setStepStatus(5, 'skipped');
+    notifyStepComplete(5, { skipped: true, reason: 'heroSmsDisabled' });
+    return;
+  }
+
+  let addPhoneDetected = false;
+  try {
+    const surface = await sendToContentScript('signup-page', {
+      type: 'CHECK_ADD_PHONE_SURFACE',
+      source: 'background',
+      payload: {},
+    });
+    addPhoneDetected = Boolean(surface?.isAddPhoneSurface);
+  } catch (err) {
+    await addLog(`Step 5: Failed to detect add-phone surface: ${getErrorMessage(err)}`, 'warn');
+  }
+
+  if (!addPhoneDetected) {
+    await addLog('Step 5: add-phone surface not detected. Skipping phone verification step.', 'warn');
+    await setStepStatus(5, 'skipped');
+    notifyStepComplete(5, { skipped: true, reason: 'addPhoneNotDetected' });
+    return;
+  }
+
+  await addLog('Step 5: add-phone detected. Starting HeroSMS phone verification...', 'info');
+  const heroResult = await runHeroSmsPhoneVerificationFlow(current, { step: 5 });
+  await addLog(`Step 5: HeroSMS phone verification completed (${heroResult.maskedPhone || 'number hidden'}).`, 'ok');
+
+  try {
+    await waitForSignupSurface({
+      step: 5,
+      selectors: [
+        'input[name="name"]',
+        'input[placeholder*="全名"]',
+        '[role="spinbutton"][data-type="year"]',
+        'input[name="birthday"]',
+        'input[name="age"]',
+      ],
+      timeout: 30000,
+    }, 30000);
+  } catch (err) {
+    await addLog(`Step 5: Profile form not ready after phone verification: ${getErrorMessage(err)}`, 'warn');
+  }
+
+  await completeBackgroundStep(5, {
+    heroSmsPhoneVerified: true,
+    heroSmsActivationId: heroResult.activationId,
+  });
+}
+
+// ============================================================
+// Step 6: Fill Name & Birthday (via signup-page.js)
+// ============================================================
+
+async function executeStep6Profile(state) {
   const { firstName, lastName } = generateRandomName();
   const { year, month, day } = generateRandomBirthday();
 
-  await addLog(`Step 5: Generated name: ${firstName} ${lastName}, Birthday: ${year}-${month}-${day}`);
+  await addLog(`Step 6: Generated name: ${firstName} ${lastName}, Birthday: ${year}-${month}-${day}`);
 
   await sendToContentScript('signup-page', {
     type: 'EXECUTE_STEP',
-    step: 5,
+    step: 6,
     source: 'background',
     payload: { firstName, lastName, year, month, day },
   });
 }
 
 // ============================================================
-// Step 6: Complete OAuth (auto click + localhost listener)
+// Step 7: Complete OAuth (auto click + localhost listener)
 // ============================================================
 
 let webNavListener = null;
@@ -3168,7 +4926,8 @@ async function findExistingLocalCallbackUrl(state = null) {
   return '';
 }
 
-async function finalizeStep6WithCallbackUrl(callbackUrl) {
+async function finalizeStep6WithCallbackUrl(callbackUrl, stepNumber = 6) {
+  const oauthStep = Number(stepNumber || 6);
   await setState({ localhostUrl: callbackUrl });
 
   let callbackError = '';
@@ -3186,23 +4945,26 @@ async function finalizeStep6WithCallbackUrl(callbackUrl) {
     );
   }
 
-  await addLog(`Step 6: Captured localhost URL: ${callbackUrl}`, 'ok');
-  await completeBackgroundStep(6, { localhostUrl: callbackUrl });
+  await addLog(`Step ${oauthStep}: Captured localhost URL: ${callbackUrl}`, 'ok');
+  await completeBackgroundStep(oauthStep, { localhostUrl: callbackUrl });
 }
 
-async function executeStep6(state) {
+async function executeStep6(state, stepNumber = 6) {
+  const oauthStep = Number(stepNumber || 6);
+  const stepLabel = `Step ${oauthStep}`;
+
   if (!state.oauthUrl) {
     throw new Error('No OAuth URL. Complete step 1 first.');
   }
 
   const existingCallbackUrl = await findExistingLocalCallbackUrl(state);
   if (existingCallbackUrl) {
-    await addLog('Step 6: Existing localhost callback already detected. Reusing it.', 'warn');
-    await finalizeStep6WithCallbackUrl(existingCallbackUrl);
+    await addLog(`${stepLabel}: Existing localhost callback already detected. Reusing it.`, 'warn');
+    await finalizeStep6WithCallbackUrl(existingCallbackUrl, oauthStep);
     return;
   }
 
-  await addLog('Step 6: Setting up localhost redirect listener...');
+  await addLog(`${stepLabel}: Setting up localhost redirect listener...`);
 
   // Register webNavigation listener (scoped to this step)
   return new Promise((resolve, reject) => {
@@ -3235,7 +4997,7 @@ async function executeStep6(state) {
           if (callbackUrl) {
             resolved = true;
             cleanupAll();
-            await finalizeStep6WithCallbackUrl(callbackUrl);
+            await finalizeStep6WithCallbackUrl(callbackUrl, oauthStep);
             resolve();
             return;
           }
@@ -3270,10 +5032,10 @@ async function executeStep6(state) {
 
       (async () => {
         try {
-          await finalizeStep6WithCallbackUrl(details.url);
-          resolve();
-        } catch (err) {
-          reject(err);
+            await finalizeStep6WithCallbackUrl(details.url, oauthStep);
+            resolve();
+          } catch (err) {
+            reject(err);
         }
       })();
     };
@@ -3287,10 +5049,10 @@ async function executeStep6(state) {
         let signupTabId = await getTabId('signup-page');
         if (signupTabId) {
           await chrome.tabs.update(signupTabId, { active: true });
-          await addLog('Step 6: Switched to auth page. Preparing continue click...');
+          await addLog(`${stepLabel}: Switched to auth page. Preparing continue click...`);
         } else {
           signupTabId = await reuseOrCreateTab('signup-page', state.oauthUrl);
-          await addLog('Step 6: Auth tab reopened. Preparing continue click...');
+          await addLog(`${stepLabel}: Auth tab reopened. Preparing continue click...`);
         }
 
         async function requestStep6Click(payload = {}) {
@@ -3307,7 +5069,7 @@ async function executeStep6(state) {
               throw sendErr;
             }
 
-            await addLog('Step 6: Auth page helper disconnected, reinjecting and retrying...', 'warn');
+            await addLog(`${stepLabel}: Auth page helper disconnected, reinjecting and retrying...`, 'warn');
             await chrome.scripting.executeScript({
               target: { tabId: signupTabId },
               files: ['content/utils.js', 'content/signup-page.js'],
@@ -3328,10 +5090,10 @@ async function executeStep6(state) {
         }
 
         if (!clickResult?.isConsentPage) {
-          await addLog('Step 6: Current page is not consent yet (likely /about-you). Continue clicked once, waiting for consent page...', 'warn');
+          await addLog(`${stepLabel}: Current page is not consent yet (likely /about-you). Continue clicked once, waiting for consent page...`, 'warn');
 
           await waitForSignupSurface({
-            step: 6,
+            step: oauthStep,
             selectors: getOauthConsentSurfaceSelectors(),
             timeout: 20000,
           }, 20000);
@@ -3346,13 +5108,13 @@ async function executeStep6(state) {
 
         if (!resolved) {
           if (clickResult?.directClicked) {
-            await addLog('Step 6: Continue button clicked. Waiting for localhost redirect...', 'ok');
+            await addLog(`${stepLabel}: Continue button clicked. Waiting for localhost redirect...`, 'ok');
             await sleepWithStop(700);
           }
 
           if (!resolved) {
             await clickWithDebugger(signupTabId, clickResult?.rect);
-            await addLog('Step 6: Debugger click dispatched as fallback, waiting for redirect...');
+            await addLog(`${stepLabel}: Debugger click dispatched as fallback, waiting for redirect...`);
           }
         }
       } catch (err) {
@@ -3363,24 +5125,101 @@ async function executeStep6(state) {
         const message = getErrorMessage(err);
         const phoneChallengeError = isMicrosoftPhoneChallengeError(message);
         if (phoneChallengeError) {
+          const current = await getState();
+
+          if (current.heroSmsEnabled) {
+            try {
+              const heroResult = await runHeroSmsPhoneVerificationFlow(current, { step: oauthStep });
+              await addLog(
+                `${stepLabel}: add-phone challenge handled by HeroSMS (${heroResult.maskedPhone || 'number hidden'}).`,
+                'ok'
+              );
+
+              const callbackAfterHero = await findExistingLocalCallbackUrl();
+              if (callbackAfterHero) {
+                resolved = true;
+                cleanupAll();
+                await finalizeStep6WithCallbackUrl(callbackAfterHero, oauthStep);
+                resolve();
+                return;
+              }
+
+              const signupTabId = await getTabId('signup-page');
+              if (signupTabId) {
+                await chrome.tabs.update(signupTabId, { active: true });
+                try {
+                  const retryClickResult = await sendToContentScript('signup-page', {
+                    type: 'STEP6_FIND_AND_CLICK',
+                    source: 'background',
+                    payload: { dryRun: false },
+                  });
+
+                  if (retryClickResult?.error) {
+                    await addLog(
+                      `${stepLabel}: HeroSMS verified but continue-click retry failed: ${retryClickResult.error}`,
+                      'warn'
+                    );
+                  } else if (retryClickResult?.directClicked) {
+                    await addLog(`${stepLabel}: HeroSMS verified. Continue button clicked again, waiting for localhost redirect...`, 'ok');
+                    await sleepWithStop(700);
+
+                    const callbackAfterRetry = await findExistingLocalCallbackUrl();
+                    if (callbackAfterRetry) {
+                      resolved = true;
+                      cleanupAll();
+                      await finalizeStep6WithCallbackUrl(callbackAfterRetry, oauthStep);
+                      resolve();
+                      return;
+                    }
+
+                    if (retryClickResult?.rect) {
+                      try {
+                        await clickWithDebugger(signupTabId, retryClickResult.rect);
+                        await addLog(`${stepLabel}: HeroSMS verified. Debugger click dispatched as fallback, waiting for localhost redirect...`);
+                      } catch (debugErr) {
+                        await addLog(
+                          `${stepLabel}: HeroSMS verified but debugger fallback click failed: ${getErrorMessage(debugErr)}`,
+                          'warn'
+                        );
+                      }
+                    }
+                  } else {
+                    await addLog(`${stepLabel}: HeroSMS verified. Waiting for localhost redirect...`, 'info');
+                  }
+                } catch (retryErr) {
+                  await addLog(
+                    `${stepLabel}: HeroSMS verified but continue-click retry failed: ${getErrorMessage(retryErr)}`,
+                    'warn'
+                  );
+                }
+              }
+
+              return;
+            } catch (heroErr) {
+              resolved = true;
+              cleanupAll();
+              reject(new Error(`${stepLabel}: HeroSMS phone verification failed: ${getErrorMessage(heroErr)}`));
+              return;
+            }
+          }
+
           try {
-            const current = await getState();
             await handleMicrosoftPhoneChallengeDuringStep4(current, {
               round: 1,
               maxRounds: 1,
               restartSignup: false,
             });
           } catch (fallbackErr) {
-            await addLog(`Step 6: add-phone fallback handling failed: ${getErrorMessage(fallbackErr)}`, 'warn');
+            await addLog(`${stepLabel}: add-phone fallback handling failed: ${getErrorMessage(fallbackErr)}`, 'warn');
           }
           resolved = true;
           cleanupAll();
-          reject(new Error('Step 6: Detected add-phone challenge. Email has been marked and replaced. Please rerun from step 3.'));
+          reject(new Error(`${stepLabel}: Detected add-phone challenge. Email has been marked and replaced. Please rerun from step 3.`));
           return;
         }
 
         await addLog(
-          `Step 6: Auto click was not completed (${message}). Please click consent manually; still waiting for localhost redirect...`,
+          `${stepLabel}: Auto click was not completed (${message}). Please click consent manually; still waiting for localhost redirect...`,
           'warn'
         );
       }
@@ -3389,28 +5228,30 @@ async function executeStep6(state) {
 }
 
 // ============================================================
-// Step 7: Callback verify/import (CPA API / CPA panel / Sub2API)
+// Step 8: Callback verify/import (CPA API / CPA panel / Sub2API)
 // ============================================================
 
-async function executeStep7(state) {
+async function executeStep7(state, stepNumber = 7) {
+  const importStep = Number(stepNumber || 7);
+
   if (isSub2apiOauthProvider(state)) {
-    await executeStep7WithSub2api(state);
+    await executeStep7WithSub2api(state, importStep);
     return;
   }
 
   if (shouldUseCpaManagementApi(state)) {
-    await executeStep7WithCpaApi(state);
+    await executeStep7WithCpaApi(state, importStep);
     return;
   }
 
   if (!state.localhostUrl) {
-    throw new Error('No localhost URL. Complete step 6 first.');
+    throw new Error(`No localhost URL. Complete step ${Math.max(1, importStep - 1)} first.`);
   }
   if (!state.vpsUrl) {
     throw new Error('CPA Auth URL not set. Please enter the CPA Auth URL in the side panel.');
   }
 
-  await addLog('Step 7: Opening CPA Auth panel...');
+  await addLog(`Step ${importStep}: Opening CPA Auth panel...`);
 
   let tabId = await getTabId('vps-panel');
   const alive = tabId && await isTabAlive('vps-panel');
@@ -3440,18 +5281,20 @@ async function executeStep7(state) {
   await new Promise(r => setTimeout(r, 450));
 
   // Send command directly — bypass queue/ready mechanism
-  await addLog(`Step 7: Filling callback URL...`);
+  await addLog(`Step ${importStep}: Filling callback URL...`);
   await chrome.tabs.sendMessage(tabId, {
     type: 'EXECUTE_STEP',
-    step: 7,
+    step: importStep,
     source: 'background',
     payload: { localhostUrl: state.localhostUrl },
   });
 }
 
-async function executeStep7WithCpaApi(state) {
+async function executeStep7WithCpaApi(state, stepNumber = 7) {
+  const importStep = Number(stepNumber || 7);
+
   if (!state.localhostUrl) {
-    throw new Error('No localhost URL. Complete step 6 first.');
+    throw new Error(`No localhost URL. Complete step ${Math.max(1, importStep - 1)} first.`);
   }
 
   const callback = parseOAuthCallbackParams(state.localhostUrl);
@@ -3466,11 +5309,11 @@ async function executeStep7WithCpaApi(state) {
   }
 
   if (callback.state && callback.state !== oauthState) {
-    await addLog(`Step 7: Callback state (${callback.state}) differs from stored CPA state (${oauthState}). Using callback state.`, 'warn');
+    await addLog(`Step ${importStep}: Callback state (${callback.state}) differs from stored CPA state (${oauthState}). Using callback state.`, 'warn');
     oauthState = callback.state;
   }
 
-  await addLog('Step 7: Forwarding OAuth callback to CPA Management API...');
+  await addLog(`Step ${importStep}: Forwarding OAuth callback to CPA Management API...`);
   try {
     await requestCpaManagementApi(state, 'oauth-callback', {
       method: 'POST',
@@ -3485,29 +5328,31 @@ async function executeStep7WithCpaApi(state) {
   } catch (err) {
     const message = getErrorMessage(err);
     if (/already|duplicate|exists|processed|handled/i.test(message)) {
-      await addLog(`Step 7: Callback already submitted (${message}). Continue polling status...`, 'warn');
+      await addLog(`Step ${importStep}: Callback already submitted (${message}). Continue polling status...`, 'warn');
     } else {
       throw err;
     }
   }
 
-  await addLog('Step 7: Confirming OAuth completion via CPA Management API...');
+  await addLog(`Step ${importStep}: Confirming OAuth completion via CPA Management API...`);
   await waitForCpaAuthStatusReady(state, oauthState, {
     maxAttempts: 40,
     intervalMs: 2000,
   });
 
   await setState({ cpaAuthState: null });
-  await addLog('Step 7: CPA import/authentication completed.', 'ok');
+  await addLog(`Step ${importStep}: CPA import/authentication completed.`, 'ok');
 
-  await completeBackgroundStep(7, {
+  await completeBackgroundStep(importStep, {
     cpaAuthState: oauthState,
   });
 }
 
-async function executeStep7WithSub2api(state) {
+async function executeStep7WithSub2api(state, stepNumber = 7) {
+  const importStep = Number(stepNumber || 7);
+
   if (!state.localhostUrl) {
-    throw new Error('No localhost URL. Complete step 6 first.');
+    throw new Error(`No localhost URL. Complete step ${Math.max(1, importStep - 1)} first.`);
   }
 
   const sessionId = String(state.sub2apiSessionId || '').trim();
@@ -3521,7 +5366,7 @@ async function executeStep7WithSub2api(state) {
     authCredential = await resolveSub2apiCredentialFromDashboard(state);
   }
 
-  await addLog('Step 7: Importing account to Sub2API...');
+  await addLog(`Step ${importStep}: Importing account to Sub2API...`);
   let created;
   try {
     created = await requestSub2apiAdminApi(state, 'admin/openai/create-from-oauth', {
@@ -3542,7 +5387,7 @@ async function executeStep7WithSub2api(state) {
       throw err;
     }
 
-    await addLog('Step 7: Sub2API auth failed, trying dashboard session token fallback...', 'warn');
+    await addLog(`Step ${importStep}: Sub2API auth failed, trying dashboard session token fallback...`, 'warn');
     const fallbackCredential = await resolveSub2apiCredentialFromDashboard({
       ...state,
       sub2apiRuntimeCredential: '',
@@ -3574,19 +5419,19 @@ async function executeStep7WithSub2api(state) {
 
   if (accountId > 0) {
     try {
-      await applySub2apiPostImportSettings(state, accountId, authCredential);
+      await applySub2apiPostImportSettings(state, accountId, authCredential, importStep);
     } catch (err) {
-      await addLog(`Step 7: Sub2API post-import settings update failed: ${getErrorMessage(err)}`, 'warn');
+      await addLog(`Step ${importStep}: Sub2API post-import settings update failed: ${getErrorMessage(err)}`, 'warn');
     }
   }
 
   if (accountId > 0) {
-    await addLog(`Step 7: Sub2API account created #${accountId}${accountName ? ` (${accountName})` : ''}`, 'ok');
+    await addLog(`Step ${importStep}: Sub2API account created #${accountId}${accountName ? ` (${accountName})` : ''}`, 'ok');
   } else {
-    await addLog(`Step 7: Sub2API import completed${accountName ? ` (${accountName})` : ''}`, 'ok');
+    await addLog(`Step ${importStep}: Sub2API import completed${accountName ? ` (${accountName})` : ''}`, 'ok');
   }
 
-  await completeBackgroundStep(7, {
+  await completeBackgroundStep(importStep, {
     sub2apiAccountId: accountId || null,
     sub2apiAccountName: accountName || null,
   });

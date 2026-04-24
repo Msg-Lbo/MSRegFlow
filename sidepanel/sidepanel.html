@@ -98,6 +98,62 @@
           <span data-i18n="blockedAccountPolicy">邮箱被封时删除账号；未勾选则跳过并换号</span>
         </label>
       </div>
+      <div class="data-row" id="row-herosms-enable">
+        <span class="data-label" data-i18n="labelHeroSms">HeroSMS</span>
+        <label class="option-toggle" for="checkbox-herosms-enabled">
+          <input type="checkbox" id="checkbox-herosms-enabled" />
+          <span data-i18n="heroSmsEnable">启用 HeroSMS 接码</span>
+        </label>
+      </div>
+      <div class="data-row" id="row-herosms-api-key" style="display:none;">
+        <span class="data-label" data-i18n="labelHeroSmsApiKey">Hero Key</span>
+        <input type="password" id="input-herosms-api-key" class="data-input" placeholder="HeroSMS API Key" data-i18n-placeholder="placeholderHeroSmsApiKey" />
+      </div>
+      <div class="data-row" id="row-herosms-country" style="display:none;">
+        <span class="data-label" data-i18n="labelHeroSmsCountry">号码地区</span>
+        <div class="herosms-country-panel">
+          <div class="herosms-country-actions">
+            <button id="btn-herosms-load-countries" class="btn btn-outline btn-sm" type="button" data-i18n="btnLoadRegions">加载地区</button>
+            <span id="herosms-country-status" class="herosms-country-status" data-i18n="heroSmsCountryNotLoaded">未加载</span>
+          </div>
+          <input type="text" id="input-herosms-country-search" class="data-input herosms-country-search" placeholder="搜索国家/地区" data-i18n-placeholder="placeholderHeroSmsCountrySearch" />
+          <select id="select-herosms-country" class="data-select herosms-country-select" size="6"></select>
+          <div id="herosms-balance-tip" class="herosms-balance-tip" data-i18n="heroSmsBalanceUnknown">余额：--</div>
+          <div id="herosms-runtime-tip" class="herosms-runtime-tip">
+            <div id="herosms-runtime-state" class="herosms-runtime-line" data-i18n="heroSmsRuntimeStateIdle">状态：空闲</div>
+            <div id="herosms-runtime-activation" class="herosms-runtime-line">激活ID：--</div>
+            <div id="herosms-runtime-detail" class="herosms-runtime-line">详情：--</div>
+          </div>
+        </div>
+      </div>
+      <div class="data-row" id="row-herosms-duration" style="display:none;">
+        <span class="data-label" data-i18n="labelHeroSmsDuration">时长</span>
+        <select id="select-herosms-duration" class="data-select" disabled>
+          <option value="20" data-i18n="heroSmsDurationFixed">20 分钟（固定）</option>
+        </select>
+      </div>
+      <div class="data-row" id="row-herosms-operator" style="display:none;">
+        <span class="data-label" data-i18n="labelHeroSmsOperator">运营商</span>
+        <select id="select-herosms-operator" class="data-select"></select>
+      </div>
+      <div class="data-row" id="row-herosms-price-mode" style="display:none;">
+        <span class="data-label" data-i18n="labelHeroSmsPriceMode">报价模式</span>
+        <select id="select-herosms-price-mode" class="data-select">
+          <option value="max" data-i18n="heroSmsPriceModeMax">报价列表（上限）</option>
+          <option value="fixed" data-i18n="heroSmsPriceModeFixed">我的出价（固定）</option>
+        </select>
+      </div>
+      <div class="data-row" id="row-herosms-price" style="display:none;">
+        <span class="data-label" data-i18n="labelHeroSmsPrice">购买价格</span>
+        <select id="select-herosms-price" class="data-select"></select>
+      </div>
+      <div class="data-row" id="row-herosms-price-custom" style="display:none;">
+        <span class="data-label" data-i18n="labelHeroSmsPriceCustom">手动出价</span>
+        <div class="herosms-price-custom-panel">
+          <input type="text" id="input-herosms-price-custom" class="data-input" placeholder="例如 0.1177" data-i18n-placeholder="placeholderHeroSmsPriceCustom" />
+          <div id="herosms-price-custom-tip" class="herosms-price-custom-tip" data-i18n="heroSmsPriceCustomTip">推荐使用手动出价，最好以网页端自定义价格的档位为准，具体哪个档位能用，需要自测，或者自测自定义价格。</div>
+        </div>
+      </div>
       <div class="data-row" id="row-mail-provider">
         <span class="data-label" data-i18n="labelVerify">Verify</span>
         <select id="select-mail-provider" class="data-select">
@@ -183,7 +239,7 @@
   <section id="steps-section">
     <div class="steps-header">
       <span class="section-label" data-i18n="sectionWorkflow">Workflow</span>
-      <span id="steps-progress" class="steps-progress">0 / 7</span>
+      <span id="steps-progress" class="steps-progress">0 / 8</span>
     </div>
     <div class="steps-list">
       <div class="step-row" data-step="1">
@@ -212,21 +268,27 @@
       </div>
       <div class="step-row" data-step="5">
         <div class="step-indicator" data-step="5"><span class="step-num">5</span></div>
-        <button class="step-btn" data-step="5" data-i18n="step5">Fill Name / Birthday</button>
+        <button class="step-btn" data-step="5" data-i18n="step5">Get Phone Code</button>
         <button class="step-skip-btn btn btn-ghost btn-xs" data-step="5" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
         <span class="step-status" data-step="5"></span>
       </div>
       <div class="step-row" data-step="6">
         <div class="step-indicator" data-step="6"><span class="step-num">6</span></div>
-        <button class="step-btn" data-step="6" data-i18n="step6">OAuth Auto Confirm</button>
+        <button class="step-btn" data-step="6" data-i18n="step6">Fill Name / Birthday</button>
         <button class="step-skip-btn btn btn-ghost btn-xs" data-step="6" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
         <span class="step-status" data-step="6"></span>
       </div>
       <div class="step-row" data-step="7">
         <div class="step-indicator" data-step="7"><span class="step-num">7</span></div>
-        <button class="step-btn" data-step="7" data-i18n="step7">Callback Verify / Import</button>
+        <button class="step-btn" data-step="7" data-i18n="step7">OAuth Auto Confirm</button>
         <button class="step-skip-btn btn btn-ghost btn-xs" data-step="7" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
         <span class="step-status" data-step="7"></span>
+      </div>
+      <div class="step-row" data-step="8">
+        <div class="step-indicator" data-step="8"><span class="step-num">8</span></div>
+        <button class="step-btn" data-step="8" data-i18n="step8">Callback Verify / Import</button>
+        <button class="step-skip-btn btn btn-ghost btn-xs" data-step="8" type="button" title="Skip this step" data-i18n-title="titleSkipStep" data-i18n="btnSkip">Skip</button>
+        <span class="step-status" data-step="8"></span>
       </div>
     </div>
   </section>

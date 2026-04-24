@@ -8,8 +8,7 @@ const STATUS_ICONS = {
   failed: '\u2717',     // ✗
   stopped: '\u25A0',    // ■
 };
-const WORKFLOW_STEPS = [1, 2, 3, 4, 5, 6, 7];
-const TOTAL_STEPS = WORKFLOW_STEPS.length;
+const WORKFLOW_STEPS = [1, 2, 3, 4, 5, 6, 7, 8];
 
 const logArea = document.getElementById('log-area');
 const displayOauthUrl = document.getElementById('display-oauth-url');
@@ -52,6 +51,29 @@ const rowSub2apiGroups = document.getElementById('row-sub2api-groups');
 const btnSub2apiLoadGroups = document.getElementById('btn-sub2api-load-groups');
 const sub2apiGroupsStatus = document.getElementById('sub2api-groups-status');
 const sub2apiGroupsList = document.getElementById('sub2api-groups-list');
+const rowHeroSmsEnable = document.getElementById('row-herosms-enable');
+const checkboxHeroSmsEnabled = document.getElementById('checkbox-herosms-enabled');
+const rowHeroSmsApiKey = document.getElementById('row-herosms-api-key');
+const inputHeroSmsApiKey = document.getElementById('input-herosms-api-key');
+const rowHeroSmsCountry = document.getElementById('row-herosms-country');
+const btnHeroSmsLoadCountries = document.getElementById('btn-herosms-load-countries');
+const heroSmsCountryStatus = document.getElementById('herosms-country-status');
+const inputHeroSmsCountrySearch = document.getElementById('input-herosms-country-search');
+const selectHeroSmsCountry = document.getElementById('select-herosms-country');
+const heroSmsBalanceTip = document.getElementById('herosms-balance-tip');
+const heroSmsRuntimeStateLine = document.getElementById('herosms-runtime-state');
+const heroSmsRuntimeActivationLine = document.getElementById('herosms-runtime-activation');
+const heroSmsRuntimeDetailLine = document.getElementById('herosms-runtime-detail');
+const rowHeroSmsDuration = document.getElementById('row-herosms-duration');
+const selectHeroSmsDuration = document.getElementById('select-herosms-duration');
+const rowHeroSmsOperator = document.getElementById('row-herosms-operator');
+const selectHeroSmsOperator = document.getElementById('select-herosms-operator');
+const rowHeroSmsPriceMode = document.getElementById('row-herosms-price-mode');
+const selectHeroSmsPriceMode = document.getElementById('select-herosms-price-mode');
+const rowHeroSmsPrice = document.getElementById('row-herosms-price');
+const selectHeroSmsPrice = document.getElementById('select-herosms-price');
+const rowHeroSmsPriceCustom = document.getElementById('row-herosms-price-custom');
+const inputHeroSmsPriceCustom = document.getElementById('input-herosms-price-custom');
 const selectMailProvider = document.getElementById('select-mail-provider');
 const rowMicrosoftManagerUrl = document.getElementById('row-microsoft-manager-url');
 const inputMicrosoftManagerUrl = document.getElementById('input-microsoft-manager-url');
@@ -85,6 +107,12 @@ let versionCheckInFlight = false;
 let hasShownNewReleaseToast = false;
 let sub2apiGroupOptions = [];
 const selectedSub2apiGroupIds = new Set();
+let heroSmsCountryOptions = [];
+let heroSmsOperatorOptions = [];
+let heroSmsPriceOptions = [];
+let heroSmsResolvedServiceCode = '';
+let heroSmsLastBalanceValue = '';
+let heroSmsRuntimeSnapshot = null;
 
 function normalizeMailProviderValue(rawValue) {
   void rawValue;
@@ -132,6 +160,14 @@ const I18N = {
     labelSub2api: 'Sub2API',
     labelSub2apiApiKey: 'API Key',
     labelSub2apiGroups: '分组',
+    labelHeroSms: 'HeroSMS',
+    labelHeroSmsApiKey: 'Hero Key',
+    labelHeroSmsCountry: '号码地区',
+    labelHeroSmsDuration: '时长',
+    labelHeroSmsOperator: '运营商',
+    labelHeroSmsPriceMode: '报价模式',
+    labelHeroSmsPrice: '购买价格',
+    labelHeroSmsPriceCustom: '手动出价',
     labelEmail: '邮箱',
     labelPassword: '密码',
     labelOauth: 'OAuth',
@@ -141,6 +177,7 @@ const I18N = {
     labelSuccessRate: '成功率',
     microsoftManagerEmailName: 'Microsoft 账号',
     blockedAccountPolicy: '邮箱被封 (AADSTS70000) 时删除账号；未勾选则跳过并换号',
+    heroSmsEnable: '启用 HeroSMS 接码',
     microsoftManagerUseAliases: '勾选后自动取号使用“主邮箱+别名邮箱”；不勾选仅使用主邮箱',
     mailProviderMicrosoftManager: 'Microsoft Account Manager API',
     microsoftManagerModeGraph: 'Graph',
@@ -151,6 +188,9 @@ const I18N = {
     placeholderCpaManagementKey: '填写明文 Management Key（不要填 $2... 加密串）',
     placeholderSub2apiBaseUrl: 'https://你的-sub2api域名',
     placeholderSub2apiApiKey: '可留空；或填写 x-api-key / Bearer token',
+    placeholderHeroSmsApiKey: '填写 HeroSMS API Key',
+    placeholderHeroSmsCountrySearch: '搜索国家/地区（支持中文/英文）',
+    placeholderHeroSmsPriceCustom: '可手动输入价格，如 0.1177',
     placeholderMicrosoftManagerUrl: 'https://你的-manager域名',
     placeholderMicrosoftManagerToken: '填写 MAIL_API_TOKEN',
     placeholderMicrosoftManagerKeyword: '可选关键词，用于筛选账号',
@@ -163,6 +203,7 @@ const I18N = {
     btnCopy: '复制',
     btnPaste: '粘贴',
     btnLoadGroups: '加载分组',
+    btnLoadRegions: '加载地区',
     btnClear: '清空',
     btnSkip: '跳过',
     btnShow: '显示',
@@ -173,9 +214,10 @@ const I18N = {
     step2: '打开注册页',
     step3: '填写邮箱 / 密码',
     step4: '获取注册验证码',
-    step5: '填写姓名 / 生日',
-    step6: 'OAuth 自动确认',
-    step7: '回调验证 / 导入',
+    step5: '获取手机验证码',
+    step6: '填写姓名 / 生日',
+    step7: 'OAuth 自动确认',
+    step8: '回调验证 / 导入',
     statusRunning: ({ step }) => `第 ${step} 步执行中...`,
     statusFailed: ({ step }) => `第 ${step} 步失败`,
     statusStopped: ({ step }) => `第 ${step} 步已停止`,
@@ -210,6 +252,34 @@ const I18N = {
     sub2apiGroupsLoaded: ({ total, selected }) => `共 ${total} 个分组，已选 ${selected} 个`,
     sub2apiGroupsEmpty: '未获取到可选分组',
     sub2apiGroupsLoadFailed: ({ message }) => `分组加载失败：${message}`,
+    heroSmsCountryNotLoaded: '未加载',
+    heroSmsCountryLoading: '正在加载地区...',
+    heroSmsCountryLoaded: ({ total, serviceCode }) => `共 ${total} 个地区，OpenAI 服务代码 ${serviceCode || '--'}`,
+    heroSmsCountryEmpty: '未获取到可选地区',
+    heroSmsCountryLoadFailed: ({ message }) => `地区加载失败：${message}`,
+    heroSmsNeedApiKey: '请先填写 HeroSMS API Key',
+    heroSmsDurationFixed: '20 分钟（固定）',
+    heroSmsOperatorAny: '任何运营商',
+    heroSmsPriceModeMax: '报价列表（上限）',
+    heroSmsPriceModeFixed: '我的出价（固定）',
+    heroSmsPriceNotSet: '不限价格（自动）',
+    heroSmsPriceUnavailable: '暂无可用报价',
+    heroSmsPriceCustomTip: '推荐使用手动出价，最好以网页端自定义价格的档位为准，具体哪个档位能用，需要自测，或者自测自定义价格。',
+    heroSmsCustomOptionsLoadFailed: ({ message }) => `自定义选项加载失败：${message}`,
+    heroSmsBalanceUnknown: '余额：--',
+    heroSmsBalance: ({ balance }) => `余额：${balance}`,
+    heroSmsRuntimeLabelState: '状态',
+    heroSmsRuntimeLabelActivation: '激活ID',
+    heroSmsRuntimeLabelDetail: '详情',
+    heroSmsRuntimeNone: '--',
+    heroSmsRuntimeStateIdle: '空闲',
+    heroSmsRuntimeStateRunning: '进行中',
+    heroSmsRuntimeStateWaitingCode: '等待短信',
+    heroSmsRuntimeStateSubmittingCode: '提交验证码',
+    heroSmsRuntimeStateCompleted: '已完成',
+    heroSmsRuntimeStateFailed: '失败',
+    heroSmsRuntimeStateCancelled: '已取消',
+    heroSmsRuntimeStateUnknown: '未知',
     versionChecking: '版本检查中...',
     versionTooltipLatest: ({ version }) => `当前已是最新版本 ${version}`,
     versionTooltipUpdateAvailable: ({ current, latest }) => `发现新版本 ${latest}（当前 ${current}），点击查看`,
@@ -241,6 +311,14 @@ const I18N = {
     labelSub2api: 'Sub2API',
     labelSub2apiApiKey: 'API Key',
     labelSub2apiGroups: 'Groups',
+    labelHeroSms: 'HeroSMS',
+    labelHeroSmsApiKey: 'Hero Key',
+    labelHeroSmsCountry: 'Region',
+    labelHeroSmsDuration: 'Duration',
+    labelHeroSmsOperator: 'Operator',
+    labelHeroSmsPriceMode: 'Price Mode',
+    labelHeroSmsPrice: 'Price',
+    labelHeroSmsPriceCustom: 'Manual Bid',
     labelEmail: 'Email',
     labelPassword: 'Password',
     labelOauth: 'OAuth',
@@ -250,6 +328,7 @@ const I18N = {
     labelSuccessRate: 'Success Rate',
     microsoftManagerEmailName: 'Microsoft account',
     blockedAccountPolicy: 'On AADSTS70000: checked=delete account, unchecked=skip and switch to next',
+    heroSmsEnable: 'Enable HeroSMS number flow',
     microsoftManagerUseAliases: 'Use primary + alias addresses when fetching emails automatically; if unchecked, only primary addresses are used',
     mailProviderMicrosoftManager: 'Microsoft Account Manager API',
     microsoftManagerModeGraph: 'Graph',
@@ -260,6 +339,9 @@ const I18N = {
     placeholderCpaManagementKey: 'Plaintext management key (not $2... hash)',
     placeholderSub2apiBaseUrl: 'https://your-sub2api-host',
     placeholderSub2apiApiKey: 'Optional; use x-api-key or Bearer token',
+    placeholderHeroSmsApiKey: 'Enter HeroSMS API Key',
+    placeholderHeroSmsCountrySearch: 'Search region (CN/EN)',
+    placeholderHeroSmsPriceCustom: 'Manual price, e.g. 0.1177',
     placeholderMicrosoftManagerUrl: 'https://your-manager-domain',
     placeholderMicrosoftManagerToken: 'Use MAIL_API_TOKEN',
     placeholderMicrosoftManagerKeyword: 'Optional keyword for account filter',
@@ -272,6 +354,7 @@ const I18N = {
     btnCopy: 'Copy',
     btnPaste: 'Paste',
     btnLoadGroups: 'Load Groups',
+    btnLoadRegions: 'Load Regions',
     btnClear: 'Clear',
     btnSkip: 'Skip',
     btnShow: 'Show',
@@ -282,9 +365,10 @@ const I18N = {
     step2: 'Open Signup',
     step3: 'Fill Email / Password',
     step4: 'Get Signup Code',
-    step5: 'Fill Name / Birthday',
-    step6: 'OAuth Auto Confirm',
-    step7: 'Callback Verify / Import',
+    step5: 'Get Phone Code',
+    step6: 'Fill Name / Birthday',
+    step7: 'OAuth Auto Confirm',
+    step8: 'Callback Verify / Import',
     statusRunning: ({ step }) => `Step ${step} running...`,
     statusFailed: ({ step }) => `Step ${step} failed`,
     statusStopped: ({ step }) => `Step ${step} stopped`,
@@ -319,6 +403,34 @@ const I18N = {
     sub2apiGroupsLoaded: ({ total, selected }) => `${total} groups, ${selected} selected`,
     sub2apiGroupsEmpty: 'No groups available',
     sub2apiGroupsLoadFailed: ({ message }) => `Failed to load groups: ${message}`,
+    heroSmsCountryNotLoaded: 'Not loaded',
+    heroSmsCountryLoading: 'Loading regions...',
+    heroSmsCountryLoaded: ({ total, serviceCode }) => `${total} regions, OpenAI service code ${serviceCode || '--'}`,
+    heroSmsCountryEmpty: 'No regions available',
+    heroSmsCountryLoadFailed: ({ message }) => `Failed to load regions: ${message}`,
+    heroSmsNeedApiKey: 'Please enter HeroSMS API Key first',
+    heroSmsDurationFixed: '20 minutes (fixed)',
+    heroSmsOperatorAny: 'Any operator',
+    heroSmsPriceModeMax: 'Quote list (cap)',
+    heroSmsPriceModeFixed: 'My bid (fixed)',
+    heroSmsPriceNotSet: 'No price cap (auto)',
+    heroSmsPriceUnavailable: 'No quotes available',
+    heroSmsPriceCustomTip: 'Manual bid is recommended. Prefer tiers shown in the website custom pricing panel; actual usable tiers depend on your account and need self-testing.',
+    heroSmsCustomOptionsLoadFailed: ({ message }) => `Failed to load custom options: ${message}`,
+    heroSmsBalanceUnknown: 'Balance: --',
+    heroSmsBalance: ({ balance }) => `Balance: ${balance}`,
+    heroSmsRuntimeLabelState: 'State',
+    heroSmsRuntimeLabelActivation: 'Activation ID',
+    heroSmsRuntimeLabelDetail: 'Detail',
+    heroSmsRuntimeNone: '--',
+    heroSmsRuntimeStateIdle: 'Idle',
+    heroSmsRuntimeStateRunning: 'Running',
+    heroSmsRuntimeStateWaitingCode: 'Waiting SMS',
+    heroSmsRuntimeStateSubmittingCode: 'Submitting Code',
+    heroSmsRuntimeStateCompleted: 'Completed',
+    heroSmsRuntimeStateFailed: 'Failed',
+    heroSmsRuntimeStateCancelled: 'Cancelled',
+    heroSmsRuntimeStateUnknown: 'Unknown',
     versionChecking: 'Checking version...',
     versionTooltipLatest: ({ version }) => `You are on the latest version ${version}`,
     versionTooltipUpdateAvailable: ({ current, latest }) => `New version ${latest} available (current ${current}), click to view`,
@@ -752,6 +864,611 @@ async function loadSub2apiGroups() {
   }
 }
 
+function normalizeHeroSmsCountryId(rawValue) {
+  const id = Number(rawValue);
+  if (!Number.isFinite(id) || id <= 0) return 0;
+  return Math.trunc(id);
+}
+
+function normalizeHeroSmsDialCode(rawValue) {
+  let digits = String(rawValue || '').replace(/\D/g, '');
+  if (digits.startsWith('00')) {
+    digits = digits.slice(2);
+  }
+  return digits;
+}
+
+function normalizeHeroSmsCountryOption(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object') return null;
+
+  const id = normalizeHeroSmsCountryId(rawValue.id ?? rawValue.countryId ?? rawValue.country);
+  if (!id) return null;
+
+  const eng = String(rawValue.eng || '').trim();
+  const chn = String(rawValue.chn || '').trim();
+  const rus = String(rawValue.rus || '').trim();
+  const dialCode = normalizeHeroSmsDialCode(
+    rawValue.dialCode
+    || rawValue.phoneCode
+    || rawValue.phone_code
+    || rawValue.prefix
+  );
+  const displayName = String(rawValue.displayName || chn || eng || rus || `#${id}`).trim();
+  const costNumber = Number(rawValue.cost);
+  const countNumber = Number(rawValue.count);
+
+  return {
+    id,
+    eng,
+    chn,
+    rus,
+    dialCode,
+    displayName,
+    cost: Number.isFinite(costNumber) ? costNumber : null,
+    count: Number.isFinite(countNumber) ? Math.trunc(countNumber) : null,
+  };
+}
+
+function normalizeHeroSmsOperatorValue(rawValue) {
+  return String(rawValue || '').trim().toLowerCase();
+}
+
+function normalizeHeroSmsPriceMode(rawValue) {
+  return String(rawValue || '').trim().toLowerCase() === 'fixed' ? 'fixed' : 'max';
+}
+
+function normalizeHeroSmsPriceValue(rawValue) {
+  const value = String(rawValue ?? '').trim().replace(',', '.');
+  if (!value) return '';
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '';
+  return numeric.toFixed(6).replace(/\.?0+$/, '');
+}
+
+function getEffectiveHeroSmsMaxPriceValue() {
+  const manualPrice = normalizeHeroSmsPriceValue(inputHeroSmsPriceCustom?.value);
+  if (manualPrice) {
+    return manualPrice;
+  }
+
+  return normalizeHeroSmsPriceValue(selectHeroSmsPrice?.value);
+}
+
+function normalizeHeroSmsPriceOption(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object') return null;
+  const price = Number(rawValue.price ?? rawValue.cost ?? rawValue.value);
+  if (!Number.isFinite(price) || price <= 0) return null;
+
+  const countNumber = Number(rawValue.count);
+  return {
+    price,
+    value: normalizeHeroSmsPriceValue(price),
+    count: Number.isFinite(countNumber) ? Math.max(0, Math.trunc(countNumber)) : null,
+  };
+}
+
+function renderHeroSmsOperatorOptions() {
+  if (!selectHeroSmsOperator) return;
+
+  const selectedBeforeRender = normalizeHeroSmsOperatorValue(selectHeroSmsOperator.value || lastKnownState?.heroSmsOperator);
+  selectHeroSmsOperator.innerHTML = '';
+
+  const anyOption = document.createElement('option');
+  anyOption.value = '';
+  anyOption.textContent = t('heroSmsOperatorAny');
+  selectHeroSmsOperator.appendChild(anyOption);
+
+  for (const operator of heroSmsOperatorOptions) {
+    const value = normalizeHeroSmsOperatorValue(operator);
+    if (!value) continue;
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    selectHeroSmsOperator.appendChild(option);
+  }
+
+  const hasSelected = [...selectHeroSmsOperator.options].some(option => option.value === selectedBeforeRender);
+  selectHeroSmsOperator.value = hasSelected ? selectedBeforeRender : '';
+}
+
+function renderHeroSmsPriceOptions() {
+  if (!selectHeroSmsPrice) return;
+
+  const selectedBeforeRender = normalizeHeroSmsPriceValue(selectHeroSmsPrice.value || lastKnownState?.heroSmsMaxPrice);
+  selectHeroSmsPrice.innerHTML = '';
+
+  const noLimitOption = document.createElement('option');
+  noLimitOption.value = '';
+  noLimitOption.textContent = t('heroSmsPriceNotSet');
+  selectHeroSmsPrice.appendChild(noLimitOption);
+
+  for (const rawOption of heroSmsPriceOptions) {
+    const optionData = normalizeHeroSmsPriceOption(rawOption);
+    if (!optionData?.value) continue;
+
+    const option = document.createElement('option');
+    option.value = optionData.value;
+    const countLabel = optionData.count != null ? ` | ${optionData.count}` : '';
+    option.textContent = `${formatHeroSmsCost(optionData.price)}${countLabel}`;
+    selectHeroSmsPrice.appendChild(option);
+  }
+
+  if (selectHeroSmsPrice.options.length <= 1) {
+    const unavailableOption = document.createElement('option');
+    unavailableOption.value = '__unavailable__';
+    unavailableOption.disabled = true;
+    unavailableOption.textContent = t('heroSmsPriceUnavailable');
+    selectHeroSmsPrice.appendChild(unavailableOption);
+  }
+
+  const hasSelected = [...selectHeroSmsPrice.options].some(option => option.value === selectedBeforeRender);
+  selectHeroSmsPrice.value = hasSelected ? selectedBeforeRender : '';
+}
+
+function applyHeroSmsCustomSelectionFromState(state = null) {
+  if (selectHeroSmsDuration) {
+    selectHeroSmsDuration.value = '20';
+  }
+
+  const source = state && typeof state === 'object' ? state : lastKnownState;
+  const operatorValue = normalizeHeroSmsOperatorValue(source?.heroSmsOperator);
+  const maxPriceValue = normalizeHeroSmsPriceValue(source?.heroSmsMaxPrice);
+  const priceMode = normalizeHeroSmsPriceMode(source?.heroSmsFixedPrice ? 'fixed' : 'max');
+
+  if (selectHeroSmsOperator) {
+    const hasOperator = [...selectHeroSmsOperator.options].some(option => option.value === operatorValue);
+    selectHeroSmsOperator.value = hasOperator ? operatorValue : '';
+  }
+
+  if (selectHeroSmsPrice) {
+    const hasPrice = [...selectHeroSmsPrice.options].some(option => option.value === maxPriceValue);
+    selectHeroSmsPrice.value = hasPrice ? maxPriceValue : '';
+    if (inputHeroSmsPriceCustom) {
+      inputHeroSmsPriceCustom.value = hasPrice ? '' : maxPriceValue;
+    }
+  } else if (inputHeroSmsPriceCustom) {
+    inputHeroSmsPriceCustom.value = maxPriceValue;
+  }
+
+  if (selectHeroSmsPriceMode) {
+    selectHeroSmsPriceMode.value = priceMode;
+    if (!normalizeHeroSmsPriceValue(selectHeroSmsPrice?.value) && selectHeroSmsPriceMode.value === 'fixed') {
+      selectHeroSmsPriceMode.value = 'max';
+    }
+  }
+}
+
+function setHeroSmsCountryStatus(messageKey, vars = {}) {
+  if (!heroSmsCountryStatus) return;
+  heroSmsCountryStatus.textContent = t(messageKey, vars);
+}
+
+function formatHeroSmsCost(cost) {
+  const numeric = Number(cost);
+  if (!Number.isFinite(numeric)) return '--';
+  if (numeric >= 1) return `$${numeric.toFixed(2)}`;
+  return `$${numeric.toFixed(3)}`;
+}
+
+function updateHeroSmsBalanceTip(balanceValue = '') {
+  if (!heroSmsBalanceTip) return;
+
+  const normalized = String(balanceValue ?? '').trim();
+  heroSmsLastBalanceValue = normalized;
+  if (!normalized) {
+    heroSmsBalanceTip.textContent = t('heroSmsBalanceUnknown');
+    heroSmsBalanceTip.classList.remove('is-low-balance');
+    return;
+  }
+
+  heroSmsBalanceTip.textContent = t('heroSmsBalance', { balance: normalized });
+  const balanceNumber = Number(normalized);
+  heroSmsBalanceTip.classList.toggle('is-low-balance', Number.isFinite(balanceNumber) && balanceNumber < 3);
+}
+
+function getHeroSmsRuntimeStateText(rawState) {
+  const state = String(rawState || '').trim().toLowerCase();
+  switch (state) {
+    case 'running':
+      return t('heroSmsRuntimeStateRunning');
+    case 'waiting_code':
+      return t('heroSmsRuntimeStateWaitingCode');
+    case 'submitting_code':
+      return t('heroSmsRuntimeStateSubmittingCode');
+    case 'completed':
+      return t('heroSmsRuntimeStateCompleted');
+    case 'failed':
+      return t('heroSmsRuntimeStateFailed');
+    case 'cancelled':
+      return t('heroSmsRuntimeStateCancelled');
+    case 'idle':
+      return t('heroSmsRuntimeStateIdle');
+    default:
+      return t('heroSmsRuntimeStateUnknown');
+  }
+}
+
+function updateHeroSmsRuntimeTip(runtime = null) {
+  if (!heroSmsRuntimeStateLine || !heroSmsRuntimeActivationLine || !heroSmsRuntimeDetailLine) return;
+
+  const source = runtime && typeof runtime === 'object' ? runtime : {};
+  const state = String(source.state || 'idle').trim().toLowerCase();
+  const activationId = String(source.activationId || '').trim();
+  const maskedPhone = String(source.maskedPhone || '').trim();
+  const detailText = String(source.detail || '').trim();
+  const errorText = String(source.error || '').trim();
+
+  const stateLabel = getHeroSmsRuntimeStateText(state);
+  const noneLabel = t('heroSmsRuntimeNone');
+
+  let detailValue = detailText;
+  if (maskedPhone) {
+    detailValue = detailValue ? `${detailValue} (${maskedPhone})` : maskedPhone;
+  }
+  if (errorText) {
+    detailValue = detailValue ? `${detailValue} | ${errorText}` : errorText;
+  }
+
+  heroSmsRuntimeStateLine.textContent = `${t('heroSmsRuntimeLabelState')}：${stateLabel}`;
+  heroSmsRuntimeActivationLine.textContent = `${t('heroSmsRuntimeLabelActivation')}：${activationId || noneLabel}`;
+  heroSmsRuntimeDetailLine.textContent = `${t('heroSmsRuntimeLabelDetail')}：${detailValue || noneLabel}`;
+
+  heroSmsRuntimeStateLine.classList.toggle('is-success', state === 'completed');
+  heroSmsRuntimeStateLine.classList.toggle('is-error', state === 'failed');
+  heroSmsRuntimeDetailLine.classList.toggle('is-error', Boolean(errorText) || state === 'failed');
+
+  heroSmsRuntimeSnapshot = {
+    state,
+    activationId,
+    maskedPhone,
+    detail: detailText,
+    error: errorText,
+  };
+}
+
+function getHeroSmsCountryFilterTokens(country) {
+  return [
+    country?.displayName,
+    country?.chn,
+    country?.eng,
+    country?.rus,
+    String(country?.id || ''),
+  ]
+    .map(item => String(item || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function renderHeroSmsCountryOptions() {
+  if (!selectHeroSmsCountry) return;
+
+  const query = String(inputHeroSmsCountrySearch?.value || '').trim().toLowerCase();
+  const selectedBeforeRender = normalizeHeroSmsCountryId(selectHeroSmsCountry.value || lastKnownState?.heroSmsCountryId);
+
+  selectHeroSmsCountry.innerHTML = '';
+
+  const filtered = heroSmsCountryOptions.filter((country) => {
+    if (!query) return true;
+    const tokens = getHeroSmsCountryFilterTokens(country);
+    return tokens.some(token => token.includes(query));
+  });
+
+  if (!filtered.length) {
+    const emptyOption = document.createElement('option');
+    emptyOption.value = '';
+    emptyOption.disabled = true;
+    emptyOption.textContent = t('heroSmsCountryEmpty');
+    selectHeroSmsCountry.appendChild(emptyOption);
+    return;
+  }
+
+  for (const country of filtered) {
+    const option = document.createElement('option');
+    option.value = String(country.id);
+    const countLabel = country.count != null ? ` | ${country.count}` : '';
+    option.textContent = `${country.displayName} | ${formatHeroSmsCost(country.cost)}${countLabel}`;
+    selectHeroSmsCountry.appendChild(option);
+  }
+
+  if (selectedBeforeRender) {
+    selectHeroSmsCountry.value = String(selectedBeforeRender);
+  }
+}
+
+function getActiveWorkflowSteps() {
+  if (checkboxHeroSmsEnabled?.checked) {
+    return [...WORKFLOW_STEPS];
+  }
+  return WORKFLOW_STEPS.filter(step => step !== 5);
+}
+
+function applyWorkflowStepVisibility() {
+  const activeSteps = getActiveWorkflowSteps();
+  const activeStepSet = new Set(activeSteps);
+
+  let displayIndex = 1;
+  for (const step of WORKFLOW_STEPS) {
+    const row = document.querySelector(`.step-row[data-step="${step}"]`);
+    if (!row) continue;
+
+    const isActive = activeStepSet.has(step);
+    row.style.display = isActive ? '' : 'none';
+
+    const stepNumEl = row.querySelector('.step-num');
+    if (stepNumEl) {
+      stepNumEl.textContent = isActive ? String(displayIndex++) : String(step);
+    }
+  }
+}
+
+function updateHeroSmsUI() {
+  const enabled = Boolean(checkboxHeroSmsEnabled?.checked);
+  const hasApiKey = Boolean(String(inputHeroSmsApiKey?.value || '').trim());
+  const customEnabled = enabled && hasApiKey;
+  applyWorkflowStepVisibility();
+
+  if (rowHeroSmsEnable) {
+    rowHeroSmsEnable.style.display = '';
+  }
+  if (rowHeroSmsApiKey) {
+    rowHeroSmsApiKey.style.display = enabled ? '' : 'none';
+  }
+  if (rowHeroSmsCountry) {
+    rowHeroSmsCountry.style.display = enabled ? '' : 'none';
+  }
+  if (rowHeroSmsDuration) {
+    rowHeroSmsDuration.style.display = enabled ? '' : 'none';
+  }
+  if (rowHeroSmsOperator) {
+    rowHeroSmsOperator.style.display = enabled ? '' : 'none';
+  }
+  if (rowHeroSmsPriceMode) {
+    rowHeroSmsPriceMode.style.display = enabled ? '' : 'none';
+  }
+  if (rowHeroSmsPrice) {
+    rowHeroSmsPrice.style.display = enabled ? '' : 'none';
+  }
+  if (rowHeroSmsPriceCustom) {
+    rowHeroSmsPriceCustom.style.display = enabled ? '' : 'none';
+  }
+
+  if (selectHeroSmsDuration) {
+    selectHeroSmsDuration.value = '20';
+  }
+  if (selectHeroSmsOperator) {
+    selectHeroSmsOperator.disabled = !customEnabled;
+  }
+  if (selectHeroSmsPriceMode) {
+    selectHeroSmsPriceMode.disabled = !customEnabled;
+  }
+  if (selectHeroSmsPrice) {
+    selectHeroSmsPrice.disabled = !customEnabled;
+  }
+  if (inputHeroSmsPriceCustom) {
+    inputHeroSmsPriceCustom.disabled = !customEnabled;
+  }
+
+  if (!enabled) {
+    setHeroSmsCountryStatus('heroSmsCountryNotLoaded');
+    updateHeroSmsBalanceTip('');
+    updateHeroSmsRuntimeTip({ state: 'idle' });
+    heroSmsOperatorOptions = [];
+    heroSmsPriceOptions = [];
+    renderHeroSmsOperatorOptions();
+    renderHeroSmsPriceOptions();
+    applyHeroSmsCustomSelectionFromState({
+      heroSmsOperator: '',
+      heroSmsMaxPrice: '',
+      heroSmsFixedPrice: false,
+    });
+  } else {
+    renderHeroSmsOperatorOptions();
+    renderHeroSmsPriceOptions();
+    applyHeroSmsCustomSelectionFromState(lastKnownState);
+  }
+
+  updateButtonStates();
+  updateProgressCounter();
+}
+
+async function persistHeroSmsCountrySelection() {
+  const selectedCountryId = normalizeHeroSmsCountryId(selectHeroSmsCountry.value);
+  const selectedCountry = heroSmsCountryOptions.find(item => item.id === selectedCountryId) || null;
+
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: {
+      heroSmsCountryId: selectedCountryId,
+      heroSmsCountryMeta: selectedCountry
+        ? {
+            id: selectedCountry.id,
+            displayName: selectedCountry.displayName,
+            eng: selectedCountry.eng,
+            chn: selectedCountry.chn,
+            rus: selectedCountry.rus,
+            dialCode: selectedCountry.dialCode,
+            cost: selectedCountry.cost,
+            count: selectedCountry.count,
+          }
+        : null,
+    },
+  });
+
+  if (lastKnownState && typeof lastKnownState === 'object') {
+    lastKnownState.heroSmsCountryId = selectedCountryId;
+    lastKnownState.heroSmsCountryMeta = selectedCountry || null;
+  }
+}
+
+async function persistHeroSmsCustomSettings() {
+  const heroSmsOperator = normalizeHeroSmsOperatorValue(selectHeroSmsOperator?.value);
+  const heroSmsMaxPrice = getEffectiveHeroSmsMaxPriceValue();
+  let heroSmsFixedPrice = normalizeHeroSmsPriceMode(selectHeroSmsPriceMode?.value) === 'fixed';
+
+  if (!heroSmsMaxPrice && heroSmsFixedPrice) {
+    heroSmsFixedPrice = false;
+    if (selectHeroSmsPriceMode) {
+      selectHeroSmsPriceMode.value = 'max';
+    }
+  }
+
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: {
+      heroSmsOperator,
+      heroSmsMaxPrice,
+      heroSmsFixedPrice,
+    },
+  });
+
+  if (lastKnownState && typeof lastKnownState === 'object') {
+    lastKnownState.heroSmsOperator = heroSmsOperator;
+    lastKnownState.heroSmsMaxPrice = heroSmsMaxPrice;
+    lastKnownState.heroSmsFixedPrice = heroSmsFixedPrice;
+  }
+}
+
+async function loadHeroSmsCustomOptions(options = {}) {
+  const { silent = false } = options;
+
+  if (!checkboxHeroSmsEnabled?.checked) {
+    return;
+  }
+
+  const apiKey = String(inputHeroSmsApiKey?.value || '').trim();
+  const countryId = normalizeHeroSmsCountryId(selectHeroSmsCountry?.value || lastKnownState?.heroSmsCountryId);
+  if (!apiKey || !countryId) {
+    heroSmsOperatorOptions = [];
+    heroSmsPriceOptions = [];
+    renderHeroSmsOperatorOptions();
+    renderHeroSmsPriceOptions();
+    applyHeroSmsCustomSelectionFromState(lastKnownState);
+    return;
+  }
+
+  const selectedCountry = heroSmsCountryOptions.find(item => item.id === countryId) || null;
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'FETCH_HEROSMS_CUSTOM_OPTIONS',
+      source: 'sidepanel',
+      payload: {
+        countryId,
+        countryMeta: selectedCountry,
+      },
+    });
+
+    if (response?.error) {
+      throw new Error(response.error);
+    }
+
+    heroSmsResolvedServiceCode = String(response?.serviceCode || heroSmsResolvedServiceCode || '').trim();
+    heroSmsOperatorOptions = Array.isArray(response?.operators)
+      ? [...new Set(response.operators.map(item => normalizeHeroSmsOperatorValue(item)).filter(Boolean))]
+      : [];
+    heroSmsPriceOptions = Array.isArray(response?.priceOptions)
+      ? response.priceOptions
+        .map(item => normalizeHeroSmsPriceOption(item))
+        .filter(Boolean)
+        .filter(item => item.count == null || item.count > 0)
+        .sort((left, right) => right.price - left.price)
+      : [];
+
+    renderHeroSmsOperatorOptions();
+    renderHeroSmsPriceOptions();
+    if (heroSmsCountryOptions.length) {
+      setHeroSmsCountryStatus('heroSmsCountryLoaded', {
+        total: heroSmsCountryOptions.length,
+        serviceCode: heroSmsResolvedServiceCode,
+      });
+    }
+    applyHeroSmsCustomSelectionFromState({
+      ...(lastKnownState || {}),
+      heroSmsOperator: response?.selectedOperator ?? lastKnownState?.heroSmsOperator,
+      heroSmsMaxPrice: response?.selectedMaxPrice ?? lastKnownState?.heroSmsMaxPrice,
+      heroSmsFixedPrice: response?.selectedFixedPrice ?? lastKnownState?.heroSmsFixedPrice,
+    });
+  } catch (err) {
+    heroSmsOperatorOptions = [];
+    heroSmsPriceOptions = [];
+    renderHeroSmsOperatorOptions();
+    renderHeroSmsPriceOptions();
+    applyHeroSmsCustomSelectionFromState(lastKnownState);
+
+    if (!silent) {
+      showToast(t('heroSmsCustomOptionsLoadFailed', { message: err?.message || err }), 'warn');
+    }
+  }
+}
+
+async function loadHeroSmsCountries(options = {}) {
+  const { forceRefresh = false, silent = false } = options;
+
+  if (!checkboxHeroSmsEnabled?.checked) return;
+  if (!String(inputHeroSmsApiKey?.value || '').trim()) {
+    setHeroSmsCountryStatus('heroSmsNeedApiKey');
+    heroSmsOperatorOptions = [];
+    heroSmsPriceOptions = [];
+    renderHeroSmsOperatorOptions();
+    renderHeroSmsPriceOptions();
+    applyHeroSmsCustomSelectionFromState(lastKnownState);
+    if (!silent) {
+      showToast(t('heroSmsNeedApiKey'), 'warn', 2400);
+    }
+    return;
+  }
+
+  btnHeroSmsLoadCountries.disabled = true;
+  setHeroSmsCountryStatus('heroSmsCountryLoading');
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'FETCH_HEROSMS_REGIONS',
+      source: 'sidepanel',
+      payload: { forceRefresh },
+    });
+    if (response?.error) {
+      throw new Error(response.error);
+    }
+
+    heroSmsResolvedServiceCode = String(response?.serviceCode || '').trim();
+    heroSmsCountryOptions = Array.isArray(response?.countries)
+      ? response.countries
+        .map(item => normalizeHeroSmsCountryOption(item))
+        .filter(Boolean)
+      : [];
+
+    renderHeroSmsCountryOptions();
+
+    const selectedFromState = normalizeHeroSmsCountryId(lastKnownState?.heroSmsCountryId);
+    if (selectedFromState) {
+      selectHeroSmsCountry.value = String(selectedFromState);
+    }
+
+    if (!heroSmsCountryOptions.length) {
+      setHeroSmsCountryStatus('heroSmsCountryEmpty');
+    } else {
+      setHeroSmsCountryStatus('heroSmsCountryLoaded', {
+        total: heroSmsCountryOptions.length,
+        serviceCode: heroSmsResolvedServiceCode,
+      });
+    }
+
+    updateHeroSmsBalanceTip(response?.balanceLabel || response?.balance || '');
+    await loadHeroSmsCustomOptions({ silent });
+  } catch (err) {
+    const message = err?.message || err;
+    setHeroSmsCountryStatus('heroSmsCountryLoadFailed', { message });
+    if (!silent) {
+      showToast(t('heroSmsCountryLoadFailed', { message }), 'error');
+    }
+  } finally {
+    btnHeroSmsLoadCountries.disabled = false;
+  }
+}
+
 function applyLanguage(language) {
   currentLanguage = I18N[language] ? language : 'zh-CN';
   localStorage.setItem('multipage-language', currentLanguage);
@@ -782,6 +1499,7 @@ function applyLanguage(language) {
   }
   updateOauthProviderUI();
   updateMailProviderUI();
+  updateHeroSmsUI();
   updateEmailSourceUI();
   syncPasswordToggleLabel();
   updateProgressCounter();
@@ -792,6 +1510,20 @@ function applyLanguage(language) {
     displayStatus.textContent = t('statusReady');
   }
   renderSub2apiGroups();
+  renderHeroSmsCountryOptions();
+  renderHeroSmsOperatorOptions();
+  renderHeroSmsPriceOptions();
+  applyHeroSmsCustomSelectionFromState(lastKnownState);
+  if (heroSmsCountryOptions.length) {
+    setHeroSmsCountryStatus('heroSmsCountryLoaded', {
+      total: heroSmsCountryOptions.length,
+      serviceCode: heroSmsResolvedServiceCode,
+    });
+  } else {
+    setHeroSmsCountryStatus('heroSmsCountryNotLoaded');
+  }
+  updateHeroSmsBalanceTip(heroSmsLastBalanceValue);
+  updateHeroSmsRuntimeTip(checkboxHeroSmsEnabled?.checked ? heroSmsRuntimeSnapshot : { state: 'idle' });
   renderRunMetrics();
 }
 
@@ -899,6 +1631,31 @@ async function restoreState() {
     for (const groupId of normalizeSub2apiGroupIds(state.sub2apiSelectedGroupIds)) {
       selectedSub2apiGroupIds.add(groupId);
     }
+    checkboxHeroSmsEnabled.checked = Boolean(state.heroSmsEnabled);
+    inputHeroSmsApiKey.value = state.heroSmsApiKey || '';
+    if (selectHeroSmsPriceMode) {
+      selectHeroSmsPriceMode.value = state.heroSmsFixedPrice ? 'fixed' : 'max';
+    }
+    heroSmsResolvedServiceCode = String(state.heroSmsServiceCode || '').trim();
+    heroSmsCountryOptions = [];
+    heroSmsOperatorOptions = [];
+    heroSmsPriceOptions = [];
+    const seededHeroCountry = normalizeHeroSmsCountryOption(
+      state.heroSmsCountryMeta
+        ? {
+            ...state.heroSmsCountryMeta,
+            id: state.heroSmsCountryMeta.id || state.heroSmsCountryId,
+          }
+        : state.heroSmsCountryId
+          ? {
+              id: state.heroSmsCountryId,
+              displayName: String(state.heroSmsCountryName || `#${state.heroSmsCountryId}`),
+            }
+          : null
+    );
+    if (seededHeroCountry) {
+      heroSmsCountryOptions.push(seededHeroCountry);
+    }
     checkboxDeleteBlockedAccount.checked = Boolean(state.deleteAbusedMicrosoftAccount);
     if (state.language) {
       selectLanguage.value = state.language;
@@ -938,8 +1695,19 @@ async function restoreState() {
     updateProgressCounter();
     updateOauthProviderUI();
     updateMailProviderUI();
+    updateHeroSmsUI();
     updateEmailSourceUI();
     renderSub2apiGroups();
+    renderHeroSmsCountryOptions();
+    renderHeroSmsOperatorOptions();
+    renderHeroSmsPriceOptions();
+    applyHeroSmsCustomSelectionFromState(state);
+    updateHeroSmsBalanceTip(state.heroSmsBalanceLabel || '');
+    updateHeroSmsRuntimeTip(checkboxHeroSmsEnabled.checked ? (state.heroSmsRuntime || { state: 'idle' }) : { state: 'idle' });
+
+    if (checkboxHeroSmsEnabled.checked) {
+      await loadHeroSmsCountries({ silent: true });
+    }
 
     if (state.autoRunPausedPhase === 'waiting_email') {
       autoContinueBar.dataset.reason = 'waiting_email';
@@ -983,6 +1751,16 @@ function updateEmailSourceUI() {
 }
 
 async function syncRuntimeSettingsBeforeExecution() {
+  const heroSmsCountryId = normalizeHeroSmsCountryId(selectHeroSmsCountry.value);
+  const heroSmsCountryMeta = heroSmsCountryOptions.find(item => item.id === heroSmsCountryId) || null;
+  const heroSmsOperator = normalizeHeroSmsOperatorValue(selectHeroSmsOperator?.value);
+  const heroSmsMaxPrice = getEffectiveHeroSmsMaxPriceValue();
+  const heroSmsFixedPrice = normalizeHeroSmsPriceMode(selectHeroSmsPriceMode?.value) === 'fixed' && Boolean(heroSmsMaxPrice);
+
+  if (!heroSmsMaxPrice && selectHeroSmsPriceMode?.value === 'fixed') {
+    selectHeroSmsPriceMode.value = 'max';
+  }
+
   await chrome.runtime.sendMessage({
     type: 'SAVE_SETTING',
     source: 'sidepanel',
@@ -993,6 +1771,24 @@ async function syncRuntimeSettingsBeforeExecution() {
       sub2apiBaseUrl: inputSub2apiBaseUrl.value.trim(),
       sub2apiAdminApiKey: inputSub2apiApiKey.value.trim(),
       sub2apiSelectedGroupIds: [...selectedSub2apiGroupIds],
+      heroSmsEnabled: checkboxHeroSmsEnabled.checked,
+      heroSmsApiKey: inputHeroSmsApiKey.value.trim(),
+      heroSmsCountryId,
+      heroSmsCountryMeta: heroSmsCountryMeta
+        ? {
+            id: heroSmsCountryMeta.id,
+            displayName: heroSmsCountryMeta.displayName,
+            eng: heroSmsCountryMeta.eng,
+            chn: heroSmsCountryMeta.chn,
+            rus: heroSmsCountryMeta.rus,
+            dialCode: heroSmsCountryMeta.dialCode,
+            cost: heroSmsCountryMeta.cost,
+            count: heroSmsCountryMeta.count,
+          }
+        : null,
+      heroSmsOperator,
+      heroSmsMaxPrice,
+      heroSmsFixedPrice,
       deleteAbusedMicrosoftAccount: checkboxDeleteBlockedAccount.checked,
       customPassword: inputPassword.value,
       mailProvider: normalizeMailProviderValue(selectMailProvider.value),
@@ -1013,6 +1809,10 @@ function updateStepUI(step, status) {
   const statusEl = document.querySelector(`.step-status[data-step="${step}"]`);
   const row = document.querySelector(`.step-row[data-step="${step}"]`);
 
+  if (lastKnownState && lastKnownState.stepStatuses && step) {
+    lastKnownState.stepStatuses[step] = status;
+  }
+
   if (statusEl) statusEl.textContent = STATUS_ICONS[status] || '';
   if (row) {
     row.className = `step-row ${status}`;
@@ -1023,15 +1823,28 @@ function updateStepUI(step, status) {
 }
 
 function getVisibleStepEntries(stepStatuses = {}) {
-  return WORKFLOW_STEPS.map((step) => [step, stepStatuses?.[step] || 'pending']);
+  return getActiveWorkflowSteps().map((step) => [step, stepStatuses?.[step] || 'pending']);
+}
+
+function toDisplayStepNumber(step) {
+  const activeSteps = getActiveWorkflowSteps();
+  const index = activeSteps.indexOf(Number(step));
+  return index >= 0 ? index + 1 : Number(step);
 }
 
 function updateProgressCounter() {
+  const activeSteps = getActiveWorkflowSteps();
+  const statusMap = lastKnownState?.stepStatuses || {};
   let completed = 0;
-  document.querySelectorAll('.step-row').forEach(row => {
-    if (row.classList.contains('completed') || row.classList.contains('skipped')) completed++;
-  });
-  stepsProgress.textContent = `${completed} / ${TOTAL_STEPS}`;
+
+  for (const step of activeSteps) {
+    const status = statusMap?.[step] || 'pending';
+    if (status === 'completed' || status === 'skipped') {
+      completed++;
+    }
+  }
+
+  stepsProgress.textContent = `${completed} / ${activeSteps.length}`;
 }
 
 function updateButtonStates() {
@@ -1046,15 +1859,30 @@ function updateButtonStates() {
     else statuses[step] = 'pending';
   });
 
-  const anyRunning = Object.values(statuses).some(s => s === 'running');
+  for (const step of WORKFLOW_STEPS) {
+    if (!Object.prototype.hasOwnProperty.call(statuses, step)) {
+      statuses[step] = lastKnownState?.stepStatuses?.[step] || 'pending';
+    }
+  }
+
+  const activeSteps = getActiveWorkflowSteps();
+  const activeStepSet = new Set(activeSteps);
+  const anyRunning = Object.values(statuses).some(status => status === 'running');
 
   for (const step of WORKFLOW_STEPS) {
     const btn = document.querySelector(`.step-btn[data-step="${step}"]`);
     const skipBtn = document.querySelector(`.step-skip-btn[data-step="${step}"]`);
     if (!btn) continue;
 
+    if (!activeStepSet.has(step)) {
+      btn.disabled = true;
+      if (skipBtn) skipBtn.disabled = true;
+      continue;
+    }
+
     const currentStatus = statuses[step];
-    const prevStep = step > 1 ? step - 1 : null;
+    const indexInActive = activeSteps.indexOf(step);
+    const prevStep = indexInActive > 0 ? activeSteps[indexInActive - 1] : null;
 
     if (anyRunning) {
       btn.disabled = true;
@@ -1082,8 +1910,14 @@ function updateButtonStates() {
 }
 
 function updateStopButtonState(active) {
+  const statusMap = lastKnownState?.stepStatuses || {};
+  const workflowStatuses = getActiveWorkflowSteps().map((step) => statusMap[step] || 'pending');
+  const hasProgress = workflowStatuses.some((status) => status !== 'pending');
+  const allFinished = workflowStatuses.length > 0
+    && workflowStatuses.every((status) => status === 'completed' || status === 'skipped');
+  const hasUnfinishedFlow = hasProgress && !allFinished;
   const autoRunActive = Boolean(lastKnownState?.autoRunning);
-  btnStop.disabled = !(active || autoRunActive);
+  btnStop.disabled = !(active || autoRunActive || hasUnfinishedFlow);
 }
 
 function updateStatusDisplay(state) {
@@ -1096,21 +1930,21 @@ function updateStatusDisplay(state) {
 
   const running = visibleEntries.find(([, s]) => s === 'running');
   if (running) {
-    displayStatus.textContent = t('statusRunning', { step: running[0] });
+    displayStatus.textContent = t('statusRunning', { step: toDisplayStepNumber(running[0]) });
     statusBar.classList.add('running');
     return;
   }
 
   const failed = visibleEntries.find(([, s]) => s === 'failed');
   if (failed) {
-    displayStatus.textContent = t('statusFailed', { step: failed[0] });
+    displayStatus.textContent = t('statusFailed', { step: toDisplayStepNumber(failed[0]) });
     statusBar.classList.add('failed');
     return;
   }
 
   const stopped = visibleEntries.find(([, s]) => s === 'stopped');
   if (stopped) {
-    displayStatus.textContent = t('statusStopped', { step: stopped[0] });
+    displayStatus.textContent = t('statusStopped', { step: toDisplayStepNumber(stopped[0]) });
     statusBar.classList.add('stopped');
     return;
   }
@@ -1129,11 +1963,41 @@ function updateStatusDisplay(state) {
 
   if (lastProgressed) {
     displayStatus.textContent = state.stepStatuses[lastProgressed] === 'skipped'
-      ? t('statusSkipped', { step: lastProgressed })
-      : t('statusDone', { step: lastProgressed });
+      ? t('statusSkipped', { step: toDisplayStepNumber(lastProgressed) })
+      : t('statusDone', { step: toDisplayStepNumber(lastProgressed) });
   } else {
     displayStatus.textContent = t('statusReady');
   }
+}
+
+function localizeLogMessage(message) {
+  const raw = String(message || '');
+  if (currentLanguage !== 'zh-CN') {
+    return raw;
+  }
+
+  let text = raw;
+
+  text = text
+    .replace(/\bStep\s+(\d+)\s+started\b/gi, '第$1步开始')
+    .replace(/\bStep\s+(\d+)\s+completed\b/gi, '第$1步完成')
+    .replace(/\bStep\s+(\d+)\s+stopped by user\b/gi, '第$1步已由用户停止')
+    .replace(/\bStep\s+(\d+)\s+skipped by user\b/gi, '第$1步已由用户跳过')
+    .replace(/\bStep\s+(\d+)\s+failed\s*:\s*/gi, '第$1步失败：')
+    .replace(/\bStep\s+(\d+)\s*:\s*/gi, '第$1步：')
+    .replace(/\badd-phone\b/gi, '手机验证')
+    .replace(/Verification submitted/gi, '验证码已提交')
+    .replace(/Clicked/gi, '已点击')
+    .replace(/Found element/gi, '已找到元素')
+    .replace(/Waiting for selector/gi, '等待选择器')
+    .replace(/Page ready state is/gi, '页面就绪状态')
+    .replace(/at readyState/gi, '，readyState=')
+    .replace(/Surface confirmed by/gi, '页面已匹配元素')
+    .replace(/Detected\s+phone\s+challenge/gi, '检测到手机验证')
+    .replace(/Could not find country selector on add-phone page\./gi, '未找到手机验证页面的国家选择器。')
+    .replace(/Could not find SMS code input on add-phone page\./gi, '未找到手机验证码输入框。');
+
+  return text;
 }
 
 function appendLog(entry) {
@@ -1141,9 +2005,10 @@ function appendLog(entry) {
   const levelLabel = entry.level.toUpperCase();
   const line = document.createElement('div');
   line.className = `log-line log-${entry.level}`;
-  const displayMessage = String(entry.message || '');
+  const rawMessage = String(entry.message || '');
+  const displayMessage = localizeLogMessage(rawMessage);
 
-  const stepMatch = entry.message.match(/Step (\d+)/);
+  const stepMatch = rawMessage.match(/Step\s+(\d+)/i) || rawMessage.match(/第\s*(\d+)\s*步/);
   const stepNum = stepMatch ? stepMatch[1] : null;
 
   let html = `<span class="log-time">${time}</span> `;
@@ -1318,6 +2183,7 @@ btnAutoContinue.addEventListener('click', async () => {
 btnReset.addEventListener('click', async () => {
   if (confirm(t('confirmReset'))) {
     await chrome.runtime.sendMessage({ type: 'RESET', source: 'sidepanel' });
+    lastKnownState = null;
     displayOauthUrl.textContent = t('waiting');
     displayOauthUrl.classList.remove('has-value');
     displayLocalhostUrl.textContent = t('waiting');
@@ -1405,6 +2271,114 @@ btnSub2apiLoadGroups.addEventListener('click', async () => {
   await loadSub2apiGroups();
 });
 
+checkboxHeroSmsEnabled.addEventListener('change', async () => {
+  updateHeroSmsUI();
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: { heroSmsEnabled: checkboxHeroSmsEnabled.checked },
+  });
+
+  if (checkboxHeroSmsEnabled.checked && String(inputHeroSmsApiKey.value || '').trim()) {
+    await loadHeroSmsCountries({ silent: true });
+  }
+});
+
+inputHeroSmsApiKey.addEventListener('change', async () => {
+  const heroSmsApiKey = String(inputHeroSmsApiKey.value || '').trim();
+  updateHeroSmsUI();
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: { heroSmsApiKey },
+  });
+
+  if (!heroSmsApiKey) {
+    heroSmsCountryOptions = [];
+    heroSmsOperatorOptions = [];
+    heroSmsPriceOptions = [];
+    heroSmsResolvedServiceCode = '';
+    renderHeroSmsCountryOptions();
+    renderHeroSmsOperatorOptions();
+    renderHeroSmsPriceOptions();
+    applyHeroSmsCustomSelectionFromState({
+      heroSmsOperator: '',
+      heroSmsMaxPrice: '',
+      heroSmsFixedPrice: false,
+    });
+    setHeroSmsCountryStatus('heroSmsCountryNotLoaded');
+    updateHeroSmsBalanceTip('');
+    return;
+  }
+
+  if (checkboxHeroSmsEnabled.checked) {
+    await loadHeroSmsCountries({ forceRefresh: true, silent: true });
+  }
+});
+
+btnHeroSmsLoadCountries.addEventListener('click', async () => {
+  await loadHeroSmsCountries({ forceRefresh: true });
+});
+
+inputHeroSmsCountrySearch.addEventListener('input', () => {
+  renderHeroSmsCountryOptions();
+});
+
+selectHeroSmsCountry.addEventListener('change', async () => {
+  await persistHeroSmsCountrySelection();
+  await loadHeroSmsCustomOptions({ silent: true });
+  await persistHeroSmsCustomSettings();
+});
+
+selectHeroSmsOperator.addEventListener('change', async () => {
+  await persistHeroSmsCustomSettings();
+});
+
+selectHeroSmsPriceMode.addEventListener('change', async () => {
+  if (normalizeHeroSmsPriceMode(selectHeroSmsPriceMode.value) === 'fixed') {
+    const selectedPrice = getEffectiveHeroSmsMaxPriceValue();
+    if (!selectedPrice) {
+      const firstAvailablePrice = normalizeHeroSmsPriceValue(heroSmsPriceOptions[0]?.price);
+      if (firstAvailablePrice) {
+        selectHeroSmsPrice.value = firstAvailablePrice;
+        if (inputHeroSmsPriceCustom) {
+          inputHeroSmsPriceCustom.value = '';
+        }
+      } else {
+        selectHeroSmsPriceMode.value = 'max';
+      }
+    }
+  }
+  await persistHeroSmsCustomSettings();
+});
+
+selectHeroSmsPrice.addEventListener('change', async () => {
+  const selectedPrice = normalizeHeroSmsPriceValue(selectHeroSmsPrice.value);
+  if (selectedPrice && inputHeroSmsPriceCustom) {
+    inputHeroSmsPriceCustom.value = '';
+  }
+
+  if (!normalizeHeroSmsPriceValue(selectHeroSmsPrice.value) && normalizeHeroSmsPriceMode(selectHeroSmsPriceMode.value) === 'fixed') {
+    selectHeroSmsPriceMode.value = 'max';
+  }
+  await persistHeroSmsCustomSettings();
+});
+
+inputHeroSmsPriceCustom.addEventListener('change', async () => {
+  const manualPrice = normalizeHeroSmsPriceValue(inputHeroSmsPriceCustom.value);
+  inputHeroSmsPriceCustom.value = manualPrice;
+
+  if (manualPrice && selectHeroSmsPrice) {
+    selectHeroSmsPrice.value = '';
+  }
+
+  if (!manualPrice && !normalizeHeroSmsPriceValue(selectHeroSmsPrice?.value) && normalizeHeroSmsPriceMode(selectHeroSmsPriceMode.value) === 'fixed') {
+    selectHeroSmsPriceMode.value = 'max';
+  }
+
+  await persistHeroSmsCustomSettings();
+});
+
 inputPassword.addEventListener('change', async () => {
   await chrome.runtime.sendMessage({
     type: 'SAVE_SETTING',
@@ -1489,7 +2463,7 @@ chrome.runtime.onMessage.addListener((message) => {
     case 'LOG_ENTRY':
       appendLog(message.payload);
       if (message.payload.level === 'error') {
-        showToast(String(message.payload.message || ''), 'error');
+        showToast(localizeLogMessage(String(message.payload.message || '')), 'error');
       }
       break;
 
@@ -1545,6 +2519,12 @@ chrome.runtime.onMessage.addListener((message) => {
       if (message.payload.localhostUrl) {
         displayLocalhostUrl.textContent = message.payload.localhostUrl;
         displayLocalhostUrl.classList.add('has-value');
+      }
+      if (message.payload.heroSmsRuntime !== undefined) {
+        updateHeroSmsRuntimeTip(checkboxHeroSmsEnabled.checked ? message.payload.heroSmsRuntime : { state: 'idle' });
+        if (lastKnownState && typeof lastKnownState === 'object') {
+          lastKnownState.heroSmsRuntime = message.payload.heroSmsRuntime;
+        }
       }
       if (message.payload.flowStartTime) {
         chrome.runtime.sendMessage({ type: 'GET_STATE', source: 'sidepanel' })
