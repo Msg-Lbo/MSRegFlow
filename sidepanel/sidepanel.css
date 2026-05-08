@@ -838,7 +838,7 @@ header {
 .log-step-tag.step-6 { color: var(--purple); background: rgba(124, 58, 237, 0.08); }
 .log-step-tag.step-7 { color: var(--green); background: var(--green-soft); }
 
-.log-msg { color: var(--text-secondary); }
+.log-msg { color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; }
 .log-line.log-ok .log-msg { color: var(--green); font-weight: 500; }
 .log-line.log-error .log-msg { color: var(--red); font-weight: 500; }
 .log-line.log-warn .log-msg { color: var(--orange); }

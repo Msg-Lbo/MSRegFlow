@@ -14,6 +14,12 @@ const SUB2API_POST_IMPORT_DEFAULTS = Object.freeze({
   priority: 1,
   billingMultiplier: 1,
 });
+const PHONE_SMS_PROVIDER_HEROSMS = 'herosms';
+const PHONE_SMS_PROVIDER_SMSCLOUD = 'smscloud';
+const PHONE_SMS_PROVIDER_SET = new Set([
+  PHONE_SMS_PROVIDER_HEROSMS,
+  PHONE_SMS_PROVIDER_SMSCLOUD,
+]);
 const HEROSMS_RUNTIME_STATE_SET = new Set([
   'idle',
   'running',
@@ -83,7 +89,9 @@ const DEFAULT_STATE = {
   microsoftManagerUseAliases: false,
   blockedMicrosoftEmails: {},
   heroSmsEnabled: false,
+  heroSmsProvider: PHONE_SMS_PROVIDER_HEROSMS,
   heroSmsApiKey: '',
+  smsCloudApiKey: '',
   heroSmsCountryId: 0,
   heroSmsCountryMeta: null,
   heroSmsBalanceLabel: '',
@@ -91,6 +99,7 @@ const DEFAULT_STATE = {
   heroSmsOperator: '',
   heroSmsMaxPrice: '',
   heroSmsFixedPrice: false,
+  phoneSmsNoWhatsappOnly: false,
   heroSmsRuntime: createHeroSmsRuntimeState(),
 };
 
@@ -111,13 +120,16 @@ const PERSISTENT_SETTING_KEYS = [
   'microsoftManagerKeyword',
   'microsoftManagerUseAliases',
   'heroSmsEnabled',
+  'heroSmsProvider',
   'heroSmsApiKey',
+  'smsCloudApiKey',
   'heroSmsCountryId',
   'heroSmsCountryMeta',
   'heroSmsServiceCode',
   'heroSmsOperator',
   'heroSmsMaxPrice',
   'heroSmsFixedPrice',
+  'phoneSmsNoWhatsappOnly',
 ];
 
 function normalizePersistentSettings(raw = {}) {
@@ -138,13 +150,16 @@ function normalizePersistentSettings(raw = {}) {
     microsoftManagerKeyword: String(raw.microsoftManagerKeyword || ''),
     microsoftManagerUseAliases: Boolean(raw.microsoftManagerUseAliases),
     heroSmsEnabled: Boolean(raw.heroSmsEnabled),
+    heroSmsProvider: normalizePhoneSmsProvider(raw.heroSmsProvider || DEFAULT_STATE.heroSmsProvider),
     heroSmsApiKey: String(raw.heroSmsApiKey || ''),
+    smsCloudApiKey: String(raw.smsCloudApiKey || ''),
     heroSmsCountryId: normalizeHeroSmsCountryId(raw.heroSmsCountryId),
     heroSmsCountryMeta: normalizeHeroSmsCountryMeta(raw.heroSmsCountryMeta),
     heroSmsServiceCode: String(raw.heroSmsServiceCode || '').trim().toLowerCase(),
     heroSmsOperator: normalizeHeroSmsOperator(raw.heroSmsOperator),
     heroSmsMaxPrice: normalizeHeroSmsMaxPrice(raw.heroSmsMaxPrice),
     heroSmsFixedPrice: Boolean(raw.heroSmsFixedPrice),
+    phoneSmsNoWhatsappOnly: Boolean(raw.phoneSmsNoWhatsappOnly),
   };
 }
 
@@ -205,13 +220,16 @@ async function getState() {
     microsoftManagerMode: normalizeMicrosoftManagerMode(merged.microsoftManagerMode),
     sub2apiSelectedGroupIds: normalizeSub2apiGroupIds(merged.sub2apiSelectedGroupIds),
     heroSmsEnabled: Boolean(merged.heroSmsEnabled),
+    heroSmsProvider: normalizePhoneSmsProvider(merged.heroSmsProvider),
     heroSmsApiKey: normalizeHeroSmsApiKey(merged.heroSmsApiKey),
+    smsCloudApiKey: normalizeHeroSmsApiKey(merged.smsCloudApiKey),
     heroSmsCountryId: normalizeHeroSmsCountryId(merged.heroSmsCountryId),
     heroSmsCountryMeta: normalizeHeroSmsCountryMeta(merged.heroSmsCountryMeta),
     heroSmsServiceCode: String(merged.heroSmsServiceCode || '').trim().toLowerCase(),
     heroSmsOperator: normalizeHeroSmsOperator(merged.heroSmsOperator),
     heroSmsMaxPrice: normalizeHeroSmsMaxPrice(merged.heroSmsMaxPrice),
     heroSmsFixedPrice: Boolean(merged.heroSmsFixedPrice),
+    phoneSmsNoWhatsappOnly: Boolean(merged.phoneSmsNoWhatsappOnly),
     heroSmsRuntime: normalizeHeroSmsRuntime(merged.heroSmsRuntime),
   };
 }
@@ -225,6 +243,16 @@ function normalizeSub2apiGroupIds(rawValue) {
     unique.add(normalized);
   }
   return [...unique];
+}
+
+function normalizePhoneSmsProvider(rawValue) {
+  const provider = String(rawValue || '').trim().toLowerCase();
+  return PHONE_SMS_PROVIDER_SET.has(provider) ? provider : PHONE_SMS_PROVIDER_HEROSMS;
+}
+
+function getPhoneSmsProviderLabel(rawValue) {
+  const provider = normalizePhoneSmsProvider(rawValue);
+  return provider === PHONE_SMS_PROVIDER_SMSCLOUD ? 'SMSCloud' : 'HeroSMS';
 }
 
 function normalizeHeroSmsCountryId(rawValue) {
@@ -290,6 +318,98 @@ function normalizeHeroSmsCountryMeta(rawValue) {
   };
 }
 
+function normalizeSmsCloudServiceRecord(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object') return null;
+
+  const code = String(rawValue.code || rawValue.serviceCode || rawValue.service || rawValue.id || '').trim().toLowerCase();
+  if (!code) return null;
+
+  const name = String(rawValue.name || rawValue.title || code).trim();
+  return { code, name };
+}
+
+function isSmsCloudOpenAiService(service) {
+  if (!service || typeof service !== 'object') return false;
+
+  const code = String(service.code || '').trim().toLowerCase();
+  const name = String(service.name || '').trim().toLowerCase();
+  if (!code && !name) return false;
+  if (SMSCLOUD_OPENAI_ALIAS_CODES.includes(code)) return true;
+
+  const normalized = `${code} ${name}`.trim();
+  return SMSCLOUD_SERVICE_KEYWORDS.some(keyword => normalized.includes(keyword));
+}
+
+function resolveSmsCloudOpenAiService(state, services = []) {
+  const preferredCode = String(state?.heroSmsServiceCode || '').trim().toLowerCase();
+  const normalizedServices = Array.isArray(services) ? services : [];
+  const openAiServices = normalizedServices.filter(item => isSmsCloudOpenAiService(item));
+
+  if (preferredCode && openAiServices.length) {
+    const preferredMatch = openAiServices.find(item => item.code === preferredCode);
+    if (preferredMatch) return preferredMatch;
+  }
+
+  const byStrictKeyword = openAiServices.find((service) => {
+    const value = `${service.code} ${service.name}`.toLowerCase();
+    return value.includes('openai');
+  });
+  if (byStrictKeyword) return byStrictKeyword;
+
+  return openAiServices[0] || null;
+}
+
+function normalizeSmsCloudCountryRecord(rawValue) {
+  if (!rawValue || typeof rawValue !== 'object') return null;
+
+  const id = normalizeHeroSmsCountryId(rawValue.id || rawValue.country || rawValue.countryCode || rawValue.code);
+  if (!id) return null;
+
+  const eng = String(rawValue.eng || rawValue.countryNameEn || '').trim();
+  const chn = String(rawValue.chn || rawValue.countryName || rawValue.name || '').trim();
+  const dialCode = normalizeHeroSmsDialCode(rawValue.phoneCode || rawValue.countryPhoneCode || rawValue.dialCode);
+  const costNumber = Number(rawValue.retailPrice ?? rawValue.price ?? rawValue.cost);
+  const countNumber = Number(rawValue.count);
+
+  return {
+    id,
+    eng,
+    chn,
+    rus: '',
+    dialCode,
+    displayName: chn || eng || `#${id}`,
+    cost: Number.isFinite(costNumber) ? costNumber : null,
+    count: Number.isFinite(countNumber) ? Math.trunc(countNumber) : null,
+  };
+}
+
+function parseSmsCloudFreePriceMap(rawValue) {
+  if (!rawValue) return [];
+
+  let source = rawValue;
+  if (typeof rawValue === 'string') {
+    try {
+      source = JSON.parse(rawValue);
+    } catch {
+      source = null;
+    }
+  }
+
+  if (!source || typeof source !== 'object') return [];
+
+  return Object.entries(source)
+    .map(([price, count]) => {
+      const numericPrice = Number(String(price || '').trim().replace(',', '.'));
+      const numericCount = Number(count);
+      if (!Number.isFinite(numericPrice) || numericPrice <= 0) return null;
+      return {
+        price: numericPrice,
+        count: Number.isFinite(numericCount) ? Math.max(0, Math.trunc(numericCount)) : null,
+      };
+    })
+    .filter(Boolean);
+}
+
 function normalizeOauthProvider(rawValue) {
   return String(rawValue || '').trim().toLowerCase() === 'sub2api' ? 'sub2api' : 'cpaauth';
 }
@@ -311,6 +431,11 @@ const HEROSMS_ACTIVATION_STATUS_COMPLETE = '6';
 const HEROSMS_ACTIVATION_STATUS_CANCEL = '8';
 const HEROSMS_SMS_POLL_MAX_ATTEMPTS = 24;
 const HEROSMS_SMS_POLL_INTERVAL_MS = 5000;
+const SMSCLOUD_API_ROOT = 'https://smscloud.sbs/api/system';
+const SMSCLOUD_SERVICE_KEYWORDS = ['openai', 'chatgpt', 'codex'];
+const SMSCLOUD_OPENAI_ALIAS_CODES = ['openai', 'oa', 'chatgpt', 'dr'];
+const SMSCLOUD_SMS_POLL_MAX_ATTEMPTS = 24;
+const SMSCLOUD_SMS_POLL_INTERVAL_MS = 5000;
 
 function normalizeHeroSmsApiKey(rawValue) {
   return String(rawValue || '').trim();
@@ -331,6 +456,71 @@ function normalizeHeroSmsMaxPrice(rawValue) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return '';
   return numeric.toFixed(6).replace(/\.?0+$/, '');
+}
+
+function unwrapSmsCloudApiPayload(payload, context = 'SMSCloud request') {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error(`${context} returned an invalid response.`);
+  }
+
+  const code = Number(payload.code);
+  const message = String(payload.message || payload.msg || payload.error || '').trim();
+  if (Number.isFinite(code) && code !== 0) {
+    throw new Error(`${context} failed: ${message || `code ${code}`}`);
+  }
+
+  return Object.prototype.hasOwnProperty.call(payload, 'data') ? payload.data : payload;
+}
+
+async function requestSmsCloudApi(state, path, options = {}) {
+  const apiKey = normalizeHeroSmsApiKey(state?.smsCloudApiKey || state?.heroSmsApiKey);
+  if (!apiKey) {
+    throw new Error('SMSCloud API Key is empty.');
+  }
+
+  const normalizedPath = String(path || '').replace(/^\/+/, '');
+  const url = new URL(`${SMSCLOUD_API_ROOT.replace(/\/+$/, '')}/${normalizedPath}`);
+  if (options.query && typeof options.query === 'object') {
+    for (const [key, value] of Object.entries(options.query)) {
+      if (value === undefined || value === null) continue;
+      const normalizedValue = String(value).trim();
+      if (!normalizedValue) continue;
+      url.searchParams.set(key, normalizedValue);
+    }
+  }
+
+  let response;
+  try {
+    response = await fetch(url.toString(), {
+      method: options.method || 'GET',
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+        apiKey,
+        ...(options.headers || {}),
+      },
+    });
+  } catch (err) {
+    throw new Error(`SMSCloud request failed: ${getErrorMessage(err)}`);
+  }
+
+  let payload = null;
+  let text = '';
+  try {
+    payload = await response.json();
+  } catch {
+    try {
+      text = String(await response.text() || '').trim();
+    } catch {
+      text = '';
+    }
+  }
+
+  if (!response.ok) {
+    const message = String(payload?.message || payload?.error || text || `${response.status} ${response.statusText}`).trim();
+    throw new Error(`SMSCloud request failed: ${message}`);
+  }
+
+  return unwrapSmsCloudApiPayload(payload, 'SMSCloud request');
 }
 
 function parseHeroSmsErrorFromText(rawValue) {
@@ -1039,6 +1229,298 @@ function parseHeroSmsActivationStatus(rawText) {
   return { state: 'unknown', raw: value };
 }
 
+async function resolveSmsCloudServiceCodeFromApi(state) {
+  const servicesPayload = await requestSmsCloudApi(state, 'public/sms/services');
+  const services = Array.isArray(servicesPayload)
+    ? servicesPayload.map(item => normalizeSmsCloudServiceRecord(item)).filter(Boolean)
+    : [];
+  const targetService = resolveSmsCloudOpenAiService(state, services);
+  if (!targetService?.code) {
+    throw new Error('Failed to locate OpenAI/ChatGPT/Codex service in SMSCloud service list.');
+  }
+
+  const updates = {
+    heroSmsServiceCode: targetService.code,
+  };
+  await setState(updates);
+  await persistSettingsIfNeeded(updates);
+
+  return targetService.code;
+}
+
+async function fetchSmsCloudRegions(options = {}) {
+  const state = await getState();
+  void options;
+
+  if (!state.heroSmsEnabled) {
+    throw new Error('SMSCloud is disabled. Enable phone verification in side panel first.');
+  }
+
+  const serviceCode = await resolveSmsCloudServiceCodeFromApi(state);
+  let countryMetaMap = new Map();
+
+  try {
+    const countriesPayload = await requestSmsCloudApi(state, 'public/sms/countries');
+    const countries = Array.isArray(countriesPayload)
+      ? countriesPayload.map(item => normalizeSmsCloudCountryRecord(item)).filter(Boolean)
+      : [];
+    countryMetaMap = new Map(countries.map(country => [country.id, country]));
+  } catch (err) {
+    await addLog(`SMSCloud: countries list failed, using inventory names only: ${getErrorMessage(err)}`, 'warn');
+  }
+
+  const inventoryPayload = await requestSmsCloudApi(state, 'public/sms/getInventory', {
+    query: { serviceCode },
+  });
+  const inventoryRecords = Array.isArray(inventoryPayload) ? inventoryPayload : [];
+
+  let countries = inventoryRecords
+    .map((item) => {
+      const normalized = normalizeSmsCloudCountryRecord(item);
+      if (!normalized) return null;
+      const meta = countryMetaMap.get(normalized.id) || null;
+      return {
+        ...normalized,
+        eng: normalized.eng || meta?.eng || '',
+        chn: normalized.chn || meta?.chn || '',
+        dialCode: normalized.dialCode || meta?.dialCode || '',
+        displayName: normalized.displayName || meta?.displayName || `#${normalized.id}`,
+      };
+    })
+    .filter(Boolean);
+
+  if (!countries.length) {
+    const detailsPayload = await requestSmsCloudApi(state, 'public/sms/service-details', {
+      query: { serviceCode },
+    });
+    countries = (Array.isArray(detailsPayload) ? detailsPayload : [])
+      .map((item) => {
+        const normalized = normalizeSmsCloudCountryRecord(item);
+        if (!normalized) return null;
+        const meta = countryMetaMap.get(normalized.id) || null;
+        return {
+          ...normalized,
+          eng: normalized.eng || meta?.eng || '',
+          chn: normalized.chn || meta?.chn || '',
+          dialCode: normalized.dialCode || meta?.dialCode || '',
+          displayName: normalized.displayName || meta?.displayName || `#${normalized.id}`,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  if (!countries.length) {
+    throw new Error('SMSCloud returned an empty region list for OpenAI service.');
+  }
+
+  countries.sort((left, right) => {
+    const leftCost = Number.isFinite(Number(left.cost)) ? Number(left.cost) : Number.POSITIVE_INFINITY;
+    const rightCost = Number.isFinite(Number(right.cost)) ? Number(right.cost) : Number.POSITIVE_INFINITY;
+    if (leftCost !== rightCost) return leftCost - rightCost;
+    return left.id - right.id;
+  });
+
+  let balance = '';
+  try {
+    const balancePayload = await requestSmsCloudApi(state, 'public/sms/balance');
+    balance = String(balancePayload?.balance ?? '').trim();
+  } catch (err) {
+    await addLog(`SMSCloud: balance query failed: ${getErrorMessage(err)}`, 'warn');
+  }
+
+  const updates = {
+    heroSmsServiceCode: serviceCode,
+    heroSmsBalanceLabel: balance,
+  };
+  await setState(updates);
+  await persistSettingsIfNeeded(updates);
+
+  return {
+    countries,
+    balance,
+    balanceLabel: balance,
+    serviceCode,
+    serviceName: 'OpenAI',
+    selectedCountryId: normalizeHeroSmsCountryId(state.heroSmsCountryId),
+  };
+}
+
+async function fetchSmsCloudCustomOptions(options = {}) {
+  const state = await getState();
+
+  if (!state.heroSmsEnabled) {
+    throw new Error('SMSCloud is disabled. Enable phone verification in side panel first.');
+  }
+
+  const countryId = normalizeHeroSmsCountryId(options.countryId || state.heroSmsCountryId || state.heroSmsCountryMeta?.id);
+  if (!countryId) {
+    throw new Error('SMSCloud region is not selected.');
+  }
+
+  const serviceCode = await resolveSmsCloudServiceCodeFromApi(state);
+  const inventoryPayload = await requestSmsCloudApi(state, 'public/sms/getInventory', {
+    query: { serviceCode },
+  });
+  const inventoryRecords = Array.isArray(inventoryPayload) ? inventoryPayload : [];
+  const targetRecord = inventoryRecords.find(item => normalizeHeroSmsCountryId(item?.country || item?.countryCode || item?.id) === countryId) || null;
+  const priceOptions = parseSmsCloudFreePriceMap(targetRecord?.freePriceMap);
+
+  const retailPrice = Number(targetRecord?.retailPrice);
+  const retailCount = Number(targetRecord?.count);
+  if (Number.isFinite(retailPrice) && retailPrice > 0) {
+    priceOptions.push({
+      price: retailPrice,
+      count: Number.isFinite(retailCount) ? Math.max(0, Math.trunc(retailCount)) : null,
+    });
+  }
+
+  const deduped = mergeHeroSmsPriceEntries(priceOptions);
+
+  return {
+    countryId,
+    serviceCode,
+    operators: [],
+    priceOptions: deduped,
+    selectedOperator: '',
+    selectedMaxPrice: normalizeHeroSmsMaxPrice(state.heroSmsMaxPrice),
+    selectedFixedPrice: false,
+  };
+}
+
+async function requestSmsCloudActivationNumber(state, countryId) {
+  const normalizedCountryId = normalizeHeroSmsCountryId(countryId);
+  if (!normalizedCountryId) {
+    throw new Error('SMSCloud region is not selected.');
+  }
+
+  const serviceCode = await resolveSmsCloudServiceCodeFromApi(state);
+  const selectedMaxPrice = normalizeHeroSmsMaxPrice(state?.heroSmsMaxPrice);
+  const query = {
+    countryCode: normalizedCountryId,
+    serviceCode,
+  };
+  if (selectedMaxPrice) {
+    query.maxPrice = selectedMaxPrice;
+    await addLog(`SMSCloud: using maxPrice=${selectedMaxPrice} for ${serviceCode}`, 'info');
+  }
+
+  const data = await requestSmsCloudApi(state, 'public/sms/flexible', { query });
+  const activationId = normalizeHeroSmsActivationId(data?.id);
+  const phoneNumber = normalizeHeroSmsPhoneNumber(data?.phoneNumber || data?.phone || data?.number);
+  if (!activationId || !phoneNumber) {
+    throw new Error('SMSCloud flexible returned an invalid number order.');
+  }
+
+  const updates = {
+    heroSmsServiceCode: serviceCode,
+  };
+  await setState(updates);
+  await persistSettingsIfNeeded(updates);
+
+  return {
+    activationId,
+    phoneNumber,
+    serviceCode,
+    raw: data,
+  };
+}
+
+async function setSmsCloudActivationStatus(state, activationId, status, options = {}) {
+  const normalizedActivationId = normalizeHeroSmsActivationId(activationId);
+  if (!normalizedActivationId) return '';
+
+  let actionPath = '';
+  const normalizedStatus = String(status || '').trim();
+  if (normalizedStatus === HEROSMS_ACTIVATION_STATUS_COMPLETE) {
+    actionPath = `public/sms/orders/finish/${encodeURIComponent(normalizedActivationId)}`;
+  } else if (normalizedStatus === HEROSMS_ACTIVATION_STATUS_CANCEL) {
+    actionPath = `public/sms/orders/cancel/${encodeURIComponent(normalizedActivationId)}`;
+  } else {
+    return '';
+  }
+
+  try {
+    await requestSmsCloudApi(state, actionPath);
+    return 'OK';
+  } catch (err) {
+    if (!options.silent) {
+      await addLog(`SMSCloud status update failed for order ${normalizedActivationId}: ${getErrorMessage(err)}`, 'warn');
+    }
+    if (options.ignoreError) return '';
+    throw err;
+  }
+}
+
+async function pollSmsCloudActivationCode(state, activationId, options = {}) {
+  const step = Number(options.step || 6);
+  const normalizedActivationId = normalizeHeroSmsActivationId(activationId);
+  if (!normalizedActivationId) {
+    throw new Error('SMSCloud order id is missing.');
+  }
+
+  const maxAttempts = Math.max(1, Number(options.maxAttempts || SMSCLOUD_SMS_POLL_MAX_ATTEMPTS));
+  const intervalMs = Math.max(1000, Number(options.intervalMs || SMSCLOUD_SMS_POLL_INTERVAL_MS));
+  let lastStatusRaw = '';
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    throwIfStopped();
+
+    const data = await requestSmsCloudApi(state, `public/sms/orders/sync/${encodeURIComponent(normalizedActivationId)}`);
+    const code = String(data?.code || '').trim();
+    const text = String(data?.text || '').trim();
+    const fallbackCodeMatch = text.match(/\b([0-9]{4,10})\b/);
+    const resolvedCode = code || fallbackCodeMatch?.[1] || '';
+    lastStatusRaw = resolvedCode ? `STATUS_OK:${resolvedCode}` : (text || 'STATUS_WAIT_CODE');
+
+    if (resolvedCode) {
+      return resolvedCode;
+    }
+
+    if (typeof options.onStatus === 'function') {
+      try {
+        await options.onStatus({
+          attempt,
+          maxAttempts,
+          status: lastStatusRaw,
+          state: 'wait',
+        });
+      } catch {}
+    }
+
+    if (attempt === 1 || attempt === maxAttempts || attempt % 4 === 0) {
+      await addLog(`Step ${step}: SMSCloud waiting SMS (${attempt}/${maxAttempts}) - ${lastStatusRaw}`);
+    }
+
+    if (attempt < maxAttempts) {
+      await sleepWithStop(intervalMs);
+    }
+  }
+
+  const timeoutSec = Math.round((maxAttempts * intervalMs) / 1000);
+  throw new Error(`SMSCloud SMS code timeout after ${timeoutSec}s. Last status: ${lastStatusRaw || 'unknown'}`);
+}
+
+async function requestPhoneSmsActivationNumber(state, countryId) {
+  if (normalizePhoneSmsProvider(state?.heroSmsProvider) === PHONE_SMS_PROVIDER_SMSCLOUD) {
+    return requestSmsCloudActivationNumber(state, countryId);
+  }
+  return requestHeroSmsActivationNumber(state, countryId);
+}
+
+async function setPhoneSmsActivationStatus(state, activationId, status, options = {}) {
+  if (normalizePhoneSmsProvider(state?.heroSmsProvider) === PHONE_SMS_PROVIDER_SMSCLOUD) {
+    return setSmsCloudActivationStatus(state, activationId, status, options);
+  }
+  return setHeroSmsActivationStatus(state, activationId, status, options);
+}
+
+async function pollPhoneSmsActivationCode(state, activationId, options = {}) {
+  if (normalizePhoneSmsProvider(state?.heroSmsProvider) === PHONE_SMS_PROVIDER_SMSCLOUD) {
+    return pollSmsCloudActivationCode(state, activationId, options);
+  }
+  return pollHeroSmsActivationCode(state, activationId, options);
+}
+
 async function resolveHeroSmsServiceCodeFromApi(state) {
   const servicesRaw = await requestHeroSmsStubAction(state, 'getServicesList', { lang: 'cn' });
   const servicesPayload = tryParseHeroSmsJson(servicesRaw);
@@ -1251,32 +1733,33 @@ async function pollHeroSmsActivationCode(state, activationId, options = {}) {
 
 async function runHeroSmsPhoneVerificationFlow(state, options = {}) {
   const step = Number(options.step || 6);
+  const providerLabel = getPhoneSmsProviderLabel(state?.heroSmsProvider);
 
   await updateHeroSmsRuntime({
     state: 'running',
     activationId: '',
     maskedPhone: '',
-    detail: `Step ${step}: 准备 HeroSMS 手机验证...`,
+    detail: `Step ${step}: 准备 ${providerLabel} 手机验证...`,
     error: '',
   });
 
   if (!state?.heroSmsEnabled) {
     await updateHeroSmsRuntime({
       state: 'failed',
-      detail: `Step ${step}: HeroSMS 未启用。`,
-      error: 'HeroSMS is disabled.',
+      detail: `Step ${step}: ${providerLabel} 未启用。`,
+      error: `${providerLabel} is disabled.`,
     });
-    throw new Error('HeroSMS is disabled.');
+    throw new Error(`${providerLabel} is disabled.`);
   }
 
   const countryId = normalizeHeroSmsCountryId(state.heroSmsCountryId || state.heroSmsCountryMeta?.id);
   if (!countryId) {
     await updateHeroSmsRuntime({
       state: 'failed',
-      detail: `Step ${step}: 未选择 HeroSMS 地区。`,
-      error: 'HeroSMS region is not selected.',
+      detail: `Step ${step}: 未选择 ${providerLabel} 地区。`,
+      error: `${providerLabel} region is not selected.`,
     });
-    throw new Error('HeroSMS region is not selected.');
+    throw new Error(`${providerLabel} region is not selected.`);
   }
 
   const countryMeta = normalizeHeroSmsCountryMeta(state.heroSmsCountryMeta || { id: countryId });
@@ -1325,10 +1808,10 @@ async function runHeroSmsPhoneVerificationFlow(state, options = {}) {
     error: '',
   });
 
-  const activation = await requestHeroSmsActivationNumber(state, countryId);
+  const activation = await requestPhoneSmsActivationNumber(state, countryId);
   const maskedPhone = maskHeroSmsPhoneNumber(activation.phoneNumber);
   await addLog(
-    `Step ${step}: HeroSMS number acquired (${maskedPhone}), activation #${activation.activationId}, service ${activation.serviceCode}.`,
+    `Step ${step}: ${providerLabel} number acquired (${maskedPhone}), activation #${activation.activationId}, service ${activation.serviceCode}.`,
     'ok'
   );
   await updateHeroSmsRuntime({
@@ -1360,7 +1843,7 @@ async function runHeroSmsPhoneVerificationFlow(state, options = {}) {
       throw new Error('HeroSMS phone number submission did not reach code input surface.');
     }
 
-    await setHeroSmsActivationStatus(state, activation.activationId, HEROSMS_ACTIVATION_STATUS_READY, {
+    await setPhoneSmsActivationStatus(state, activation.activationId, HEROSMS_ACTIVATION_STATUS_READY, {
       silent: true,
       ignoreError: true,
     });
@@ -1373,7 +1856,7 @@ async function runHeroSmsPhoneVerificationFlow(state, options = {}) {
       error: '',
     });
 
-    const smsCode = await pollHeroSmsActivationCode(state, activation.activationId, {
+    const smsCode = await pollPhoneSmsActivationCode(state, activation.activationId, {
       step,
       onStatus: async ({ attempt, maxAttempts, status }) => {
         if (attempt === 1 || attempt === maxAttempts || attempt % 2 === 0) {
@@ -1409,7 +1892,7 @@ async function runHeroSmsPhoneVerificationFlow(state, options = {}) {
       throw new Error('HeroSMS SMS code submission was not confirmed by page script.');
     }
 
-    await setHeroSmsActivationStatus(state, activation.activationId, HEROSMS_ACTIVATION_STATUS_COMPLETE, {
+    await setPhoneSmsActivationStatus(state, activation.activationId, HEROSMS_ACTIVATION_STATUS_COMPLETE, {
       silent: true,
       ignoreError: true,
     });
@@ -1423,7 +1906,7 @@ async function runHeroSmsPhoneVerificationFlow(state, options = {}) {
       error: '',
     });
 
-    await addLog(`Step ${step}: HeroSMS SMS code submitted successfully.`, 'ok');
+    await addLog(`Step ${step}: ${providerLabel} SMS code submitted successfully.`, 'ok');
 
     return {
       activationId: activation.activationId,
@@ -1436,7 +1919,7 @@ async function runHeroSmsPhoneVerificationFlow(state, options = {}) {
   } catch (err) {
     const errorMessage = getErrorMessage(err);
     if (!activationDone) {
-      await setHeroSmsActivationStatus(state, activation.activationId, HEROSMS_ACTIVATION_STATUS_CANCEL, {
+      await setPhoneSmsActivationStatus(state, activation.activationId, HEROSMS_ACTIVATION_STATUS_CANCEL, {
         silent: true,
         ignoreError: true,
       });
@@ -1458,7 +1941,10 @@ async function runHeroSmsPhoneVerificationFlow(state, options = {}) {
 
 async function fetchHeroSmsRegions(options = {}) {
   const state = await getState();
-  void options;
+
+  if (normalizePhoneSmsProvider(state.heroSmsProvider) === PHONE_SMS_PROVIDER_SMSCLOUD) {
+    return fetchSmsCloudRegions(options);
+  }
 
   if (!state.heroSmsEnabled) {
     throw new Error('HeroSMS is disabled. Enable it in side panel first.');
@@ -1541,6 +2027,10 @@ async function fetchHeroSmsRegions(options = {}) {
 
 async function fetchHeroSmsCustomOptions(options = {}) {
   const state = await getState();
+
+  if (normalizePhoneSmsProvider(state.heroSmsProvider) === PHONE_SMS_PROVIDER_SMSCLOUD) {
+    return fetchSmsCloudCustomOptions(options);
+  }
 
   if (!state.heroSmsEnabled) {
     throw new Error('HeroSMS is disabled. Enable it in side panel first.');
@@ -3098,6 +3588,10 @@ async function handleMessage(message, sender) {
         await setManualEmailState(message.payload.email);
       }
       await executeStep(step);
+      const status = (await getState()).stepStatuses?.[step];
+      if (status !== 'completed' && status !== 'skipped' && status !== 'stopped') {
+        await completeBackgroundStep(step, {});
+      }
       return { ok: true };
     }
 
@@ -3150,8 +3644,18 @@ async function handleMessage(message, sender) {
         updates.sub2apiSelectedGroupIds = normalizeSub2apiGroupIds(message.payload.sub2apiSelectedGroupIds);
       }
       if (message.payload.heroSmsEnabled !== undefined) updates.heroSmsEnabled = Boolean(message.payload.heroSmsEnabled);
+      if (message.payload.heroSmsProvider !== undefined) {
+        updates.heroSmsProvider = normalizePhoneSmsProvider(message.payload.heroSmsProvider);
+        updates.heroSmsBalanceLabel = '';
+        updates.heroSmsServiceCode = '';
+      }
       if (message.payload.heroSmsApiKey !== undefined) {
         updates.heroSmsApiKey = normalizeHeroSmsApiKey(message.payload.heroSmsApiKey);
+        updates.heroSmsBalanceLabel = '';
+        updates.heroSmsServiceCode = '';
+      }
+      if (message.payload.smsCloudApiKey !== undefined) {
+        updates.smsCloudApiKey = normalizeHeroSmsApiKey(message.payload.smsCloudApiKey);
         updates.heroSmsBalanceLabel = '';
         updates.heroSmsServiceCode = '';
       }
@@ -3173,6 +3677,9 @@ async function handleMessage(message, sender) {
       if (message.payload.heroSmsFixedPrice !== undefined) {
         updates.heroSmsFixedPrice = Boolean(message.payload.heroSmsFixedPrice);
       }
+      if (message.payload.phoneSmsNoWhatsappOnly !== undefined) {
+        updates.phoneSmsNoWhatsappOnly = Boolean(message.payload.phoneSmsNoWhatsappOnly);
+      }
       if (updates.heroSmsMaxPrice === '') {
         updates.heroSmsFixedPrice = false;
       }
@@ -3184,7 +3691,9 @@ async function handleMessage(message, sender) {
       }
       const shouldResetHeroSmsRuntime =
         (updates.heroSmsEnabled !== undefined && !updates.heroSmsEnabled)
+        || updates.heroSmsProvider !== undefined
         || (updates.heroSmsApiKey !== undefined && !updates.heroSmsApiKey)
+        || (updates.smsCloudApiKey !== undefined && !updates.smsCloudApiKey)
         || (updates.heroSmsCountryId !== undefined && updates.heroSmsCountryId === 0);
       if (shouldResetHeroSmsRuntime) {
         updates.heroSmsRuntime = createHeroSmsRuntimeState();
@@ -3673,6 +4182,17 @@ async function autoRunLoop(totalRuns, options = {}) {
         microsoftManagerMode: prevState.microsoftManagerMode,
         microsoftManagerKeyword: prevState.microsoftManagerKeyword,
         microsoftManagerUseAliases: Boolean(prevState.microsoftManagerUseAliases),
+        heroSmsEnabled: Boolean(prevState.heroSmsEnabled),
+        heroSmsProvider: normalizePhoneSmsProvider(prevState.heroSmsProvider),
+        heroSmsApiKey: prevState.heroSmsApiKey,
+        smsCloudApiKey: prevState.smsCloudApiKey,
+        heroSmsCountryId: normalizeHeroSmsCountryId(prevState.heroSmsCountryId),
+        heroSmsCountryMeta: normalizeHeroSmsCountryMeta(prevState.heroSmsCountryMeta),
+        heroSmsServiceCode: String(prevState.heroSmsServiceCode || '').trim().toLowerCase(),
+        heroSmsOperator: normalizeHeroSmsOperator(prevState.heroSmsOperator),
+        heroSmsMaxPrice: normalizeHeroSmsMaxPrice(prevState.heroSmsMaxPrice),
+        heroSmsFixedPrice: Boolean(prevState.heroSmsFixedPrice),
+        phoneSmsNoWhatsappOnly: Boolean(prevState.phoneSmsNoWhatsappOnly),
         autoRunning: true,
         autoRunCurrentRun: run,
         autoRunTotalRuns: totalRuns,
@@ -4425,9 +4945,12 @@ function dedupeAndSortSub2apiGroupOptions(groups) {
   });
 }
 
-async function fetchSub2apiGroups() {
-  const state = await getState();
+async function fetchSub2apiGroups(options = {}) {
+  const state = options.state || await getState();
   let authCredential = String(state.sub2apiAdminApiKey || state.sub2apiRuntimeCredential || '').trim();
+  if (options.authCredential) {
+    authCredential = String(options.authCredential || '').trim();
+  }
   if (!authCredential) {
     authCredential = await resolveSub2apiCredentialFromDashboard(state);
   }
@@ -4454,7 +4977,9 @@ async function fetchSub2apiGroups() {
         continue;
       }
 
-      await addLog(`Sub2API: Loaded ${groups.length} group options from ${candidate.path}`, 'ok');
+      if (!options.silent) {
+        await addLog(`Sub2API: Loaded ${groups.length} group options from ${candidate.path}`, 'ok');
+      }
       return groups;
     } catch (err) {
       lastError = new Error(`${candidate.method} ${candidate.path}: ${getErrorMessage(err)}`);
@@ -4467,19 +4992,61 @@ async function fetchSub2apiGroups() {
   throw new Error('Failed to load Sub2API groups: no available group endpoint returned data.');
 }
 
-function buildSub2apiAccountSettingsPayload(state, accountId) {
-  const selectedGroupIds = normalizeSub2apiGroupIds(state.sub2apiSelectedGroupIds);
-  const numericGroupIds = selectedGroupIds
+function normalizeSub2apiNumericGroupIds(rawValue) {
+  return normalizeSub2apiGroupIds(rawValue)
     .map((item) => Number(item))
-    .filter((value) => Number.isFinite(value) && value > 0);
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .map((value) => Math.trunc(value));
+}
 
+/**
+ * 校验 Sub2API 已选择分组是否仍存在，避免新版本在账号创建/更新时因失效分组报错。
+ * @param {object} state 当前插件状态。
+ * @param {string} authCredential Sub2API 管理端鉴权凭据。
+ * @param {number} stepNumber 当前执行步骤编号，用于日志输出。
+ * @returns {Promise<number[]>} 可安全提交给 Sub2API 的分组 ID 列表。
+ */
+async function resolveValidSub2apiGroupIds(state, authCredential, stepNumber = 7) {
+  const selectedGroupIds = normalizeSub2apiNumericGroupIds(state.sub2apiSelectedGroupIds);
+  if (!selectedGroupIds.length) return [];
+
+  try {
+    const groups = await fetchSub2apiGroups({ state, authCredential, silent: true });
+    const availableGroupIds = new Set(normalizeSub2apiNumericGroupIds(groups.map((group) => group.id)));
+    const validGroupIds = selectedGroupIds.filter((id) => availableGroupIds.has(id));
+    const skippedGroupIds = selectedGroupIds.filter((id) => !availableGroupIds.has(id));
+
+    if (skippedGroupIds.length > 0) {
+      const persistedGroupIds = validGroupIds.map((id) => String(id));
+      await setState({ sub2apiSelectedGroupIds: persistedGroupIds });
+      await persistSettingsIfNeeded({ sub2apiSelectedGroupIds: persistedGroupIds });
+      await addLog(
+        `Step ${stepNumber}: Sub2API skipped unavailable group IDs: ${skippedGroupIds.join(', ')}`,
+        'warn'
+      );
+    }
+
+    return validGroupIds;
+  } catch (err) {
+    const message = getErrorMessage(err);
+    await addLog(
+      `Step ${stepNumber}: Sub2API group validation failed; group binding skipped to avoid import failure: ${message}`,
+      'warn'
+    );
+    return [];
+  }
+}
+
+function buildSub2apiAccountSettingsPayload(state, groupIds = null) {
+  const numericGroupIds = Array.isArray(groupIds)
+    ? groupIds.filter((value) => Number.isFinite(value) && value > 0).map((value) => Math.trunc(value))
+    : normalizeSub2apiNumericGroupIds(state.sub2apiSelectedGroupIds);
   const payload = {
     max_concurrency: SUB2API_POST_IMPORT_DEFAULTS.maxConcurrency,
     concurrency: SUB2API_POST_IMPORT_DEFAULTS.maxConcurrency,
     load_factor: SUB2API_POST_IMPORT_DEFAULTS.loadFactor,
     priority: SUB2API_POST_IMPORT_DEFAULTS.priority,
     rate_multiplier: SUB2API_POST_IMPORT_DEFAULTS.billingMultiplier,
-    id: accountId,
   };
 
   if (numericGroupIds.length > 0) {
@@ -4489,43 +5056,85 @@ function buildSub2apiAccountSettingsPayload(state, accountId) {
   return payload;
 }
 
-async function applySub2apiPostImportSettings(state, accountId, authCredential, stepNumber = 7) {
-  const payload = buildSub2apiAccountSettingsPayload(state, accountId);
-  const selectedGroups = Array.isArray(payload.group_ids) ? payload.group_ids.length : 0;
+function buildSub2apiCreateFromOauthPayload(state, sessionId, callback, groupIds = null) {
+  const accountSettings = buildSub2apiAccountSettingsPayload(state, groupIds);
+  return {
+    session_id: sessionId,
+    code: callback.code,
+    state: callback.state,
+    redirect_uri: callback.redirectUri,
+    name: String(state.email || '').trim() || undefined,
+    concurrency: accountSettings.concurrency,
+    priority: accountSettings.priority,
+    ...(Array.isArray(accountSettings.group_ids) ? { group_ids: accountSettings.group_ids } : {}),
+  };
+}
 
-  const candidates = [
-    { method: 'PUT', path: `admin/accounts/${accountId}` },
-    { method: 'POST', path: 'admin/accounts/bulk-update', body: {
-      account_ids: [accountId],
-      concurrency: SUB2API_POST_IMPORT_DEFAULTS.maxConcurrency,
-      load_factor: SUB2API_POST_IMPORT_DEFAULTS.loadFactor,
-      priority: SUB2API_POST_IMPORT_DEFAULTS.priority,
-      rate_multiplier: SUB2API_POST_IMPORT_DEFAULTS.billingMultiplier,
-      ...(Array.isArray(payload.group_ids) ? { group_ids: payload.group_ids } : {}),
-    } },
-  ];
-
-  let lastError = null;
-  for (const candidate of candidates) {
-    try {
-      await requestSub2apiAdminApi(state, candidate.path, {
-        method: candidate.method,
-        authCredential,
-        body: candidate.body || payload,
-      });
-
-      await addLog(
-        `Step ${stepNumber}: Sub2API account #${accountId} settings updated (并发 ${SUB2API_POST_IMPORT_DEFAULTS.maxConcurrency} / 负载 ${SUB2API_POST_IMPORT_DEFAULTS.loadFactor} / 优先级 ${SUB2API_POST_IMPORT_DEFAULTS.priority} / 计费倍率 ${SUB2API_POST_IMPORT_DEFAULTS.billingMultiplier}; 分组 ${selectedGroups} 个)`,
-        'ok'
-      );
-      return;
-    } catch (err) {
-      lastError = new Error(`${candidate.method} ${candidate.path}: ${getErrorMessage(err)}`);
+async function createSub2apiAccountFromOAuth(state, sessionId, callback, authCredential, groupIds, stepNumber) {
+  try {
+    const created = await requestSub2apiAdminApi(state, 'admin/openai/create-from-oauth', {
+      method: 'POST',
+      authCredential,
+      body: buildSub2apiCreateFromOauthPayload(state, sessionId, callback, groupIds),
+    });
+    return { created, groupIds };
+  } catch (err) {
+    const message = getErrorMessage(err);
+    if (!Array.isArray(groupIds) || !groupIds.length || !/group not found/i.test(message)) {
+      throw err;
     }
-  }
 
-  if (lastError) {
-    throw lastError;
+    await addLog(
+      `Step ${stepNumber}: Sub2API group binding failed during import; retrying without groups...`,
+      'warn'
+    );
+    const created = await requestSub2apiAdminApi(state, 'admin/openai/create-from-oauth', {
+      method: 'POST',
+      authCredential,
+      body: buildSub2apiCreateFromOauthPayload(state, sessionId, callback, []),
+    });
+    return { created, groupIds: [] };
+  }
+}
+
+async function logSub2apiSettingsUpdated(accountId, selectedGroups, stepNumber) {
+  await addLog(
+    `Step ${stepNumber}: Sub2API account #${accountId} settings updated (并发 ${SUB2API_POST_IMPORT_DEFAULTS.maxConcurrency} / 负载 ${SUB2API_POST_IMPORT_DEFAULTS.loadFactor} / 优先级 ${SUB2API_POST_IMPORT_DEFAULTS.priority} / 计费倍率 ${SUB2API_POST_IMPORT_DEFAULTS.billingMultiplier}; 分组 ${selectedGroups} 个)`,
+    'ok'
+  );
+}
+
+async function applySub2apiPostImportSettings(state, accountId, authCredential, stepNumber = 7, groupIds = null) {
+  const payload = buildSub2apiAccountSettingsPayload(state, groupIds);
+  const selectedGroups = Array.isArray(payload.group_ids) ? payload.group_ids.length : 0;
+  const path = `admin/accounts/${accountId}`;
+
+  try {
+    await requestSub2apiAdminApi(state, path, {
+      method: 'PUT',
+      authCredential,
+      body: payload,
+    });
+    await logSub2apiSettingsUpdated(accountId, selectedGroups, stepNumber);
+    return;
+  } catch (err) {
+    const message = getErrorMessage(err);
+    if (Array.isArray(payload.group_ids) && /group not found/i.test(message)) {
+      const retryPayload = { ...payload };
+      delete retryPayload.group_ids;
+      await addLog(
+        `Step ${stepNumber}: Sub2API group binding failed; retrying account settings without groups...`,
+        'warn'
+      );
+      await requestSub2apiAdminApi(state, path, {
+        method: 'PUT',
+        authCredential,
+        body: retryPayload,
+      });
+      await logSub2apiSettingsUpdated(accountId, 0, stepNumber);
+      return;
+    }
+    throw new Error(`PUT ${path}: ${message}`);
   }
 }
 
@@ -4741,9 +5350,9 @@ async function executeStep4(state) {
         throw new Error(`Step 4: ${getErrorMessage(err)}. Reached maximum blocked-account retry rounds (${maxSwitchRounds}).`);
       }
 
-      if (phoneChallengeError) {
-        if (current.heroSmsEnabled) {
-          await addLog('Step 4: add-phone challenge detected. HeroSMS phone verification will run in step 5.', 'warn');
+        if (phoneChallengeError) {
+          if (current.heroSmsEnabled) {
+          await addLog(`Step 4: add-phone challenge detected. ${getPhoneSmsProviderLabel(current.heroSmsProvider)} phone verification will run in step 5.`, 'warn');
           await completeBackgroundStep(4, {});
           return;
         }
@@ -4771,14 +5380,15 @@ async function executeStep4(state) {
 }
 
 // ============================================================
-// Step 5: HeroSMS Phone Verification (add-phone)
+// Step 5: Phone Verification (add-phone)
 // ============================================================
 
 async function executeStep5(state) {
   const current = state || await getState();
+  const providerLabel = getPhoneSmsProviderLabel(current.heroSmsProvider);
 
   if (!current.heroSmsEnabled) {
-    await addLog('Step 5: HeroSMS is disabled, skipping phone verification step.', 'warn');
+    await addLog('Step 5: phone verification is disabled, skipping phone verification step.', 'warn');
     await setStepStatus(5, 'skipped');
     notifyStepComplete(5, { skipped: true, reason: 'heroSmsDisabled' });
     return;
@@ -4803,9 +5413,9 @@ async function executeStep5(state) {
     return;
   }
 
-  await addLog('Step 5: add-phone detected. Starting HeroSMS phone verification...', 'info');
+  await addLog(`Step 5: add-phone detected. Starting ${providerLabel} phone verification...`, 'info');
   const heroResult = await runHeroSmsPhoneVerificationFlow(current, { step: 5 });
-  await addLog(`Step 5: HeroSMS phone verification completed (${heroResult.maskedPhone || 'number hidden'}).`, 'ok');
+  await addLog(`Step 5: ${providerLabel} phone verification completed (${heroResult.maskedPhone || 'number hidden'}).`, 'ok');
 
   try {
     await waitForSignupSurface({
@@ -5083,39 +5693,91 @@ async function executeStep6(state, stepNumber = 6) {
           }
         }
 
-        let clickResult = await requestStep6Click({ dryRun: false });
+        async function finalizeExistingCallbackIfAvailable() {
+          if (resolved) return true;
+          const callbackUrl = await findExistingLocalCallbackUrl();
+          if (!callbackUrl) return false;
 
-        if (clickResult?.error) {
-          throw new Error(clickResult.error);
+          resolved = true;
+          cleanupAll();
+          try {
+            await finalizeStep6WithCallbackUrl(callbackUrl, oauthStep);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+          return true;
         }
 
-        if (!clickResult?.isConsentPage) {
-          await addLog(`${stepLabel}: Current page is not consent yet (likely /about-you). Continue clicked once, waiting for consent page...`, 'warn');
+        const clickRetryStartedAt = Date.now();
+        const clickRetryWindowMs = 105000;
+        let attempt = 0;
 
-          await waitForSignupSurface({
-            step: oauthStep,
-            selectors: getOauthConsentSurfaceSelectors(),
-            timeout: 20000,
-          }, 20000);
+        while (!resolved && Date.now() - clickRetryStartedAt < clickRetryWindowMs) {
+          throwIfStopped();
+          attempt += 1;
 
-          if (!resolved) {
-            clickResult = await requestStep6Click({ dryRun: false });
+          if (await finalizeExistingCallbackIfAvailable()) return;
+
+          try {
+            signupTabId = await getTabId('signup-page') || signupTabId;
+            if (signupTabId) {
+              await chrome.tabs.update(signupTabId, { active: true });
+            }
+
+            let clickResult = await requestStep6Click({ dryRun: false });
             if (clickResult?.error) {
               throw new Error(clickResult.error);
             }
+
+            if (!clickResult?.isConsentPage) {
+              await addLog(`${stepLabel}: Consent page not ready yet (attempt ${attempt}). Waiting and retrying...`, 'warn');
+              try {
+                await waitForSignupSurface({
+                  step: oauthStep,
+                  selectors: getOauthConsentSurfaceSelectors(),
+                  timeout: 10000,
+                }, 10000);
+              } catch (surfaceErr) {
+                if (await finalizeExistingCallbackIfAvailable()) return;
+                await addLog(`${stepLabel}: Consent surface wait retry ${attempt} failed: ${getErrorMessage(surfaceErr)}`, 'warn');
+              }
+              await sleepWithStop(900);
+              continue;
+            }
+
+            if (clickResult?.directClicked) {
+              await addLog(`${stepLabel}: Continue button clicked (attempt ${attempt}). Waiting for localhost redirect...`, 'ok');
+              await sleepWithStop(900);
+              if (await finalizeExistingCallbackIfAvailable()) return;
+            }
+
+            if (!resolved && clickResult?.rect) {
+              await clickWithDebugger(signupTabId, clickResult.rect);
+              await addLog(`${stepLabel}: Debugger click dispatched as fallback (attempt ${attempt}), waiting for redirect...`);
+              await sleepWithStop(1200);
+              if (await finalizeExistingCallbackIfAvailable()) return;
+            }
+
+            if (!resolved) {
+              await addLog(`${stepLabel}: Redirect not captured after click attempt ${attempt}; retrying...`, 'warn');
+              await sleepWithStop(Math.min(2500, 900 + attempt * 250));
+            }
+          } catch (attemptErr) {
+            if (resolved) return;
+
+            const attemptMessage = getErrorMessage(attemptErr);
+            if (isMicrosoftPhoneChallengeError(attemptMessage)) {
+              throw attemptErr;
+            }
+
+            await addLog(`${stepLabel}: Auto click attempt ${attempt} failed: ${attemptMessage}. Retrying...`, 'warn');
+            await sleepWithStop(Math.min(3000, 1200 + attempt * 300));
           }
         }
 
         if (!resolved) {
-          if (clickResult?.directClicked) {
-            await addLog(`${stepLabel}: Continue button clicked. Waiting for localhost redirect...`, 'ok');
-            await sleepWithStop(700);
-          }
-
-          if (!resolved) {
-            await clickWithDebugger(signupTabId, clickResult?.rect);
-            await addLog(`${stepLabel}: Debugger click dispatched as fallback, waiting for redirect...`);
-          }
+          throw new Error('OAuth consent auto click did not complete after retries.');
         }
       } catch (err) {
         if (resolved) {
@@ -5128,10 +5790,11 @@ async function executeStep6(state, stepNumber = 6) {
           const current = await getState();
 
           if (current.heroSmsEnabled) {
+            const providerLabel = getPhoneSmsProviderLabel(current.heroSmsProvider);
             try {
               const heroResult = await runHeroSmsPhoneVerificationFlow(current, { step: oauthStep });
               await addLog(
-                `${stepLabel}: add-phone challenge handled by HeroSMS (${heroResult.maskedPhone || 'number hidden'}).`,
+                `${stepLabel}: add-phone challenge handled by ${providerLabel} (${heroResult.maskedPhone || 'number hidden'}).`,
                 'ok'
               );
 
@@ -5156,11 +5819,11 @@ async function executeStep6(state, stepNumber = 6) {
 
                   if (retryClickResult?.error) {
                     await addLog(
-                      `${stepLabel}: HeroSMS verified but continue-click retry failed: ${retryClickResult.error}`,
+                      `${stepLabel}: ${providerLabel} verified but continue-click retry failed: ${retryClickResult.error}`,
                       'warn'
                     );
                   } else if (retryClickResult?.directClicked) {
-                    await addLog(`${stepLabel}: HeroSMS verified. Continue button clicked again, waiting for localhost redirect...`, 'ok');
+                    await addLog(`${stepLabel}: ${providerLabel} verified. Continue button clicked again, waiting for localhost redirect...`, 'ok');
                     await sleepWithStop(700);
 
                     const callbackAfterRetry = await findExistingLocalCallbackUrl();
@@ -5175,20 +5838,20 @@ async function executeStep6(state, stepNumber = 6) {
                     if (retryClickResult?.rect) {
                       try {
                         await clickWithDebugger(signupTabId, retryClickResult.rect);
-                        await addLog(`${stepLabel}: HeroSMS verified. Debugger click dispatched as fallback, waiting for localhost redirect...`);
+                        await addLog(`${stepLabel}: ${providerLabel} verified. Debugger click dispatched as fallback, waiting for localhost redirect...`);
                       } catch (debugErr) {
                         await addLog(
-                          `${stepLabel}: HeroSMS verified but debugger fallback click failed: ${getErrorMessage(debugErr)}`,
+                          `${stepLabel}: ${providerLabel} verified but debugger fallback click failed: ${getErrorMessage(debugErr)}`,
                           'warn'
                         );
                       }
                     }
                   } else {
-                    await addLog(`${stepLabel}: HeroSMS verified. Waiting for localhost redirect...`, 'info');
+                    await addLog(`${stepLabel}: ${providerLabel} verified. Waiting for localhost redirect...`, 'info');
                   }
                 } catch (retryErr) {
                   await addLog(
-                    `${stepLabel}: HeroSMS verified but continue-click retry failed: ${getErrorMessage(retryErr)}`,
+                    `${stepLabel}: ${providerLabel} verified but continue-click retry failed: ${getErrorMessage(retryErr)}`,
                     'warn'
                   );
                 }
@@ -5198,7 +5861,7 @@ async function executeStep6(state, stepNumber = 6) {
             } catch (heroErr) {
               resolved = true;
               cleanupAll();
-              reject(new Error(`${stepLabel}: HeroSMS phone verification failed: ${getErrorMessage(heroErr)}`));
+              reject(new Error(`${stepLabel}: ${providerLabel} phone verification failed: ${getErrorMessage(heroErr)}`));
               return;
             }
           }
@@ -5366,20 +6029,14 @@ async function executeStep7WithSub2api(state, stepNumber = 7) {
     authCredential = await resolveSub2apiCredentialFromDashboard(state);
   }
 
+  let validGroupIds = await resolveValidSub2apiGroupIds(state, authCredential, importStep);
+
   await addLog(`Step ${importStep}: Importing account to Sub2API...`);
   let created;
   try {
-    created = await requestSub2apiAdminApi(state, 'admin/openai/create-from-oauth', {
-      method: 'POST',
-      authCredential,
-      body: {
-        session_id: sessionId,
-        code: callback.code,
-        state: callback.state,
-        redirect_uri: callback.redirectUri,
-        name: String(state.email || '').trim() || undefined,
-      },
-    });
+    const result = await createSub2apiAccountFromOAuth(state, sessionId, callback, authCredential, validGroupIds, importStep);
+    created = result.created;
+    validGroupIds = result.groupIds;
   } catch (err) {
     const message = getErrorMessage(err);
     const isAuthError = /invalid admin api key|invalid token|authorization required|unauthorized|forbidden/i.test(message);
@@ -5393,17 +6050,10 @@ async function executeStep7WithSub2api(state, stepNumber = 7) {
       sub2apiRuntimeCredential: '',
     });
     authCredential = fallbackCredential;
-    created = await requestSub2apiAdminApi(state, 'admin/openai/create-from-oauth', {
-      method: 'POST',
-      authCredential: fallbackCredential,
-      body: {
-        session_id: sessionId,
-        code: callback.code,
-        state: callback.state,
-        redirect_uri: callback.redirectUri,
-        name: String(state.email || '').trim() || undefined,
-      },
-    });
+    validGroupIds = await resolveValidSub2apiGroupIds(state, fallbackCredential, importStep);
+    const result = await createSub2apiAccountFromOAuth(state, sessionId, callback, fallbackCredential, validGroupIds, importStep);
+    created = result.created;
+    validGroupIds = result.groupIds;
   }
 
   await setState({ sub2apiSessionId: null });
@@ -5419,7 +6069,7 @@ async function executeStep7WithSub2api(state, stepNumber = 7) {
 
   if (accountId > 0) {
     try {
-      await applySub2apiPostImportSettings(state, accountId, authCredential, importStep);
+      await applySub2apiPostImportSettings(state, accountId, authCredential, importStep, validGroupIds);
     } catch (err) {
       await addLog(`Step ${importStep}: Sub2API post-import settings update failed: ${getErrorMessage(err)}`, 'warn');
     }

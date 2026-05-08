@@ -53,11 +53,16 @@ const sub2apiGroupsStatus = document.getElementById('sub2api-groups-status');
 const sub2apiGroupsList = document.getElementById('sub2api-groups-list');
 const rowHeroSmsEnable = document.getElementById('row-herosms-enable');
 const checkboxHeroSmsEnabled = document.getElementById('checkbox-herosms-enabled');
+const rowPhoneSmsProvider = document.getElementById('row-phone-sms-provider');
+const selectPhoneSmsProvider = document.getElementById('select-phone-sms-provider');
 const rowHeroSmsApiKey = document.getElementById('row-herosms-api-key');
+const labelPhoneSmsApiKey = document.getElementById('label-phone-sms-api-key');
 const inputHeroSmsApiKey = document.getElementById('input-herosms-api-key');
+const inputSmsCloudApiKey = document.getElementById('input-smscloud-api-key');
 const rowHeroSmsCountry = document.getElementById('row-herosms-country');
 const btnHeroSmsLoadCountries = document.getElementById('btn-herosms-load-countries');
 const heroSmsCountryStatus = document.getElementById('herosms-country-status');
+const checkboxPhoneSmsNoWhatsappOnly = document.getElementById('checkbox-phone-sms-no-whatsapp-only');
 const inputHeroSmsCountrySearch = document.getElementById('input-herosms-country-search');
 const selectHeroSmsCountry = document.getElementById('select-herosms-country');
 const heroSmsBalanceTip = document.getElementById('herosms-balance-tip');
@@ -71,9 +76,12 @@ const selectHeroSmsOperator = document.getElementById('select-herosms-operator')
 const rowHeroSmsPriceMode = document.getElementById('row-herosms-price-mode');
 const selectHeroSmsPriceMode = document.getElementById('select-herosms-price-mode');
 const rowHeroSmsPrice = document.getElementById('row-herosms-price');
+const labelPhoneSmsPrice = document.getElementById('label-phone-sms-price');
 const selectHeroSmsPrice = document.getElementById('select-herosms-price');
 const rowHeroSmsPriceCustom = document.getElementById('row-herosms-price-custom');
+const labelPhoneSmsPriceCustom = document.getElementById('label-phone-sms-price-custom');
 const inputHeroSmsPriceCustom = document.getElementById('input-herosms-price-custom');
+const heroSmsPriceCustomTip = document.getElementById('herosms-price-custom-tip');
 const selectMailProvider = document.getElementById('select-mail-provider');
 const rowMicrosoftManagerUrl = document.getElementById('row-microsoft-manager-url');
 const inputMicrosoftManagerUrl = document.getElementById('input-microsoft-manager-url');
@@ -99,6 +107,14 @@ const manifestInfo = chrome.runtime.getManifest();
 const releaseRepo = 'Msg-Lbo/MSRegFlow';
 const currentManifestVersion = normalizeVersionValue(manifestInfo.version || '0.0.0');
 const currentManifestVersionLabel = formatVersionLabel(currentManifestVersion);
+const PHONE_SMS_PROVIDER_HEROSMS = 'herosms';
+const PHONE_SMS_PROVIDER_SMSCLOUD = 'smscloud';
+const PHONE_SMS_NO_WHATSAPP_COUNTRY_IDS = new Set([
+  2, 6, 7, 10, 11, 14, 17, 19, 20, 21, 22, 24, 26, 38, 40, 41, 51, 52, 53, 57,
+  58, 59, 60, 61, 64, 65, 69, 70, 71, 72, 74, 75, 76, 78, 80, 83, 86, 88, 91,
+  92, 96, 99, 102, 105, 110, 113, 115, 116, 119, 125, 130, 133, 143, 147, 148,
+  152, 153, 157, 160, 161, 163, 171, 182, 188, 204,
+]);
 let latestReleaseVersion = '';
 let latestReleaseUrl = `https://github.com/${releaseRepo}/releases`;
 let hasNewRelease = false;
@@ -117,6 +133,27 @@ let heroSmsRuntimeSnapshot = null;
 function normalizeMailProviderValue(rawValue) {
   void rawValue;
   return 'microsoft-manager';
+}
+
+function normalizePhoneSmsProviderValue(rawValue) {
+  const provider = String(rawValue || '').trim().toLowerCase();
+  return provider === PHONE_SMS_PROVIDER_SMSCLOUD ? PHONE_SMS_PROVIDER_SMSCLOUD : PHONE_SMS_PROVIDER_HEROSMS;
+}
+
+function getSelectedPhoneSmsProvider() {
+  return normalizePhoneSmsProviderValue(selectPhoneSmsProvider?.value || lastKnownState?.heroSmsProvider);
+}
+
+function getPhoneSmsProviderLabel(providerValue = getSelectedPhoneSmsProvider()) {
+  return normalizePhoneSmsProviderValue(providerValue) === PHONE_SMS_PROVIDER_SMSCLOUD ? 'SMSCloud' : 'HeroSMS';
+}
+
+function getActivePhoneSmsApiKeyInput(providerValue = getSelectedPhoneSmsProvider()) {
+  return normalizePhoneSmsProviderValue(providerValue) === PHONE_SMS_PROVIDER_SMSCLOUD ? inputSmsCloudApiKey : inputHeroSmsApiKey;
+}
+
+function getActivePhoneSmsApiKeyValue(providerValue = getSelectedPhoneSmsProvider()) {
+  return String(getActivePhoneSmsApiKeyInput(providerValue)?.value || '').trim();
 }
 
 // ============================================================
@@ -160,14 +197,19 @@ const I18N = {
     labelSub2api: 'Sub2API',
     labelSub2apiApiKey: 'API Key',
     labelSub2apiGroups: '分组',
+    labelPhoneSms: '接码',
+    labelPhoneSmsProvider: '平台',
     labelHeroSms: 'HeroSMS',
     labelHeroSmsApiKey: 'Hero Key',
+    labelSmsCloudApiKey: 'Cloud Key',
     labelHeroSmsCountry: '号码地区',
     labelHeroSmsDuration: '时长',
     labelHeroSmsOperator: '运营商',
     labelHeroSmsPriceMode: '报价模式',
     labelHeroSmsPrice: '购买价格',
     labelHeroSmsPriceCustom: '手动出价',
+    labelSmsCloudPrice: '价格上限',
+    labelSmsCloudPriceCustom: '手动上限',
     labelEmail: '邮箱',
     labelPassword: '密码',
     labelOauth: 'OAuth',
@@ -177,7 +219,10 @@ const I18N = {
     labelSuccessRate: '成功率',
     microsoftManagerEmailName: 'Microsoft 账号',
     blockedAccountPolicy: '邮箱被封 (AADSTS70000) 时删除账号；未勾选则跳过并换号',
-    heroSmsEnable: '启用 HeroSMS 接码',
+    heroSmsEnable: '启用接码平台',
+    phoneSmsProviderHeroSms: 'HeroSMS',
+    phoneSmsProviderSmsCloud: 'SMSCloud',
+    phoneSmsNoWhatsappOnly: '仅显示无需 WhatsApp 的国家',
     microsoftManagerUseAliases: '勾选后自动取号使用“主邮箱+别名邮箱”；不勾选仅使用主邮箱',
     mailProviderMicrosoftManager: 'Microsoft Account Manager API',
     microsoftManagerModeGraph: 'Graph',
@@ -189,8 +234,10 @@ const I18N = {
     placeholderSub2apiBaseUrl: 'https://你的-sub2api域名',
     placeholderSub2apiApiKey: '可留空；或填写 x-api-key / Bearer token',
     placeholderHeroSmsApiKey: '填写 HeroSMS API Key',
+    placeholderSmsCloudApiKey: '填写 SMSCloud API Key',
     placeholderHeroSmsCountrySearch: '搜索国家/地区（支持中文/英文）',
     placeholderHeroSmsPriceCustom: '可手动输入价格，如 0.1177',
+    smsCloudPriceCustomTip: 'SMSCloud 使用 maxPrice 作为最高可接受零售价；不填则按平台默认价格购买。',
     placeholderMicrosoftManagerUrl: 'https://你的-manager域名',
     placeholderMicrosoftManagerToken: '填写 MAIL_API_TOKEN',
     placeholderMicrosoftManagerKeyword: '可选关键词，用于筛选账号',
@@ -253,16 +300,18 @@ const I18N = {
     sub2apiGroupsEmpty: '未获取到可选分组',
     sub2apiGroupsLoadFailed: ({ message }) => `分组加载失败：${message}`,
     heroSmsCountryNotLoaded: '未加载',
-    heroSmsCountryLoading: '正在加载地区...',
-    heroSmsCountryLoaded: ({ total, serviceCode }) => `共 ${total} 个地区，OpenAI 服务代码 ${serviceCode || '--'}`,
+    heroSmsCountryLoading: ({ provider }) => `正在加载${provider || '接码平台'}地区...`,
+    heroSmsCountryLoaded: ({ total, serviceCode, provider }) => `共 ${total} 个地区，${provider || '接码平台'} OpenAI 服务代码 ${serviceCode || '--'}`,
+    heroSmsCountryLoadedFiltered: ({ total, filtered, serviceCode, provider }) => `共 ${total} 个地区，已筛选 ${filtered} 个无需 WhatsApp，${provider || '接码平台'} OpenAI 服务代码 ${serviceCode || '--'}`,
     heroSmsCountryEmpty: '未获取到可选地区',
     heroSmsCountryLoadFailed: ({ message }) => `地区加载失败：${message}`,
-    heroSmsNeedApiKey: '请先填写 HeroSMS API Key',
+    heroSmsNeedApiKey: ({ provider }) => `请先填写 ${provider || '接码平台'} API Key`,
     heroSmsDurationFixed: '20 分钟（固定）',
     heroSmsOperatorAny: '任何运营商',
     heroSmsPriceModeMax: '报价列表（上限）',
     heroSmsPriceModeFixed: '我的出价（固定）',
     heroSmsPriceNotSet: '不限价格（自动）',
+    smsCloudPriceNotSet: '不限价格（默认价）',
     heroSmsPriceUnavailable: '暂无可用报价',
     heroSmsPriceCustomTip: '推荐使用手动出价，最好以网页端自定义价格的档位为准，具体哪个档位能用，需要自测，或者自测自定义价格。',
     heroSmsCustomOptionsLoadFailed: ({ message }) => `自定义选项加载失败：${message}`,
@@ -311,14 +360,19 @@ const I18N = {
     labelSub2api: 'Sub2API',
     labelSub2apiApiKey: 'API Key',
     labelSub2apiGroups: 'Groups',
+    labelPhoneSms: 'SMS',
+    labelPhoneSmsProvider: 'Provider',
     labelHeroSms: 'HeroSMS',
     labelHeroSmsApiKey: 'Hero Key',
+    labelSmsCloudApiKey: 'Cloud Key',
     labelHeroSmsCountry: 'Region',
     labelHeroSmsDuration: 'Duration',
     labelHeroSmsOperator: 'Operator',
     labelHeroSmsPriceMode: 'Price Mode',
     labelHeroSmsPrice: 'Price',
     labelHeroSmsPriceCustom: 'Manual Bid',
+    labelSmsCloudPrice: 'Max Price',
+    labelSmsCloudPriceCustom: 'Manual Cap',
     labelEmail: 'Email',
     labelPassword: 'Password',
     labelOauth: 'OAuth',
@@ -328,7 +382,10 @@ const I18N = {
     labelSuccessRate: 'Success Rate',
     microsoftManagerEmailName: 'Microsoft account',
     blockedAccountPolicy: 'On AADSTS70000: checked=delete account, unchecked=skip and switch to next',
-    heroSmsEnable: 'Enable HeroSMS number flow',
+    heroSmsEnable: 'Enable phone SMS provider',
+    phoneSmsProviderHeroSms: 'HeroSMS',
+    phoneSmsProviderSmsCloud: 'SMSCloud',
+    phoneSmsNoWhatsappOnly: 'Only show countries without WhatsApp',
     microsoftManagerUseAliases: 'Use primary + alias addresses when fetching emails automatically; if unchecked, only primary addresses are used',
     mailProviderMicrosoftManager: 'Microsoft Account Manager API',
     microsoftManagerModeGraph: 'Graph',
@@ -340,8 +397,10 @@ const I18N = {
     placeholderSub2apiBaseUrl: 'https://your-sub2api-host',
     placeholderSub2apiApiKey: 'Optional; use x-api-key or Bearer token',
     placeholderHeroSmsApiKey: 'Enter HeroSMS API Key',
+    placeholderSmsCloudApiKey: 'Enter SMSCloud API Key',
     placeholderHeroSmsCountrySearch: 'Search region (CN/EN)',
     placeholderHeroSmsPriceCustom: 'Manual price, e.g. 0.1177',
+    smsCloudPriceCustomTip: 'SMSCloud uses maxPrice as the acceptable retail cap. Leave empty to buy at the default price.',
     placeholderMicrosoftManagerUrl: 'https://your-manager-domain',
     placeholderMicrosoftManagerToken: 'Use MAIL_API_TOKEN',
     placeholderMicrosoftManagerKeyword: 'Optional keyword for account filter',
@@ -404,16 +463,18 @@ const I18N = {
     sub2apiGroupsEmpty: 'No groups available',
     sub2apiGroupsLoadFailed: ({ message }) => `Failed to load groups: ${message}`,
     heroSmsCountryNotLoaded: 'Not loaded',
-    heroSmsCountryLoading: 'Loading regions...',
-    heroSmsCountryLoaded: ({ total, serviceCode }) => `${total} regions, OpenAI service code ${serviceCode || '--'}`,
+    heroSmsCountryLoading: ({ provider }) => `Loading ${provider || 'SMS provider'} regions...`,
+    heroSmsCountryLoaded: ({ total, serviceCode, provider }) => `${total} regions, ${provider || 'SMS provider'} OpenAI service code ${serviceCode || '--'}`,
+    heroSmsCountryLoadedFiltered: ({ total, filtered, serviceCode, provider }) => `${total} regions, ${filtered} without WhatsApp, ${provider || 'SMS provider'} OpenAI service code ${serviceCode || '--'}`,
     heroSmsCountryEmpty: 'No regions available',
     heroSmsCountryLoadFailed: ({ message }) => `Failed to load regions: ${message}`,
-    heroSmsNeedApiKey: 'Please enter HeroSMS API Key first',
+    heroSmsNeedApiKey: ({ provider }) => `Please enter ${provider || 'SMS provider'} API Key first`,
     heroSmsDurationFixed: '20 minutes (fixed)',
     heroSmsOperatorAny: 'Any operator',
     heroSmsPriceModeMax: 'Quote list (cap)',
     heroSmsPriceModeFixed: 'My bid (fixed)',
     heroSmsPriceNotSet: 'No price cap (auto)',
+    smsCloudPriceNotSet: 'No price cap (default)',
     heroSmsPriceUnavailable: 'No quotes available',
     heroSmsPriceCustomTip: 'Manual bid is recommended. Prefer tiers shown in the website custom pricing panel; actual usable tiers depend on your account and need self-testing.',
     heroSmsCustomOptionsLoadFailed: ({ message }) => `Failed to load custom options: ${message}`,
@@ -794,10 +855,32 @@ async function persistSelectedSub2apiGroupIds() {
   });
 }
 
+function getLoadedSub2apiGroupIdSet() {
+  return new Set(sub2apiGroupOptions.map((group) => String(group.id)));
+}
+
+function getVisibleSelectedSub2apiGroupIds() {
+  if (!sub2apiGroupOptions.length) return [...selectedSub2apiGroupIds];
+  const loadedGroupIds = getLoadedSub2apiGroupIdSet();
+  return [...selectedSub2apiGroupIds].filter((groupId) => loadedGroupIds.has(String(groupId)));
+}
+
+async function pruneStaleSub2apiGroupSelections() {
+  if (!sub2apiGroupOptions.length) return;
+  const visibleSelected = getVisibleSelectedSub2apiGroupIds();
+  if (visibleSelected.length === selectedSub2apiGroupIds.size) return;
+
+  selectedSub2apiGroupIds.clear();
+  for (const groupId of visibleSelected) {
+    selectedSub2apiGroupIds.add(groupId);
+  }
+  await persistSelectedSub2apiGroupIds();
+}
+
 function updateSub2apiGroupStatusSummary() {
   setSub2apiGroupStatus('sub2apiGroupsLoaded', {
     total: sub2apiGroupOptions.length,
-    selected: selectedSub2apiGroupIds.size,
+    selected: getVisibleSelectedSub2apiGroupIds().length,
   });
 }
 
@@ -855,6 +938,7 @@ async function loadSub2apiGroups() {
     if (response?.error) throw new Error(response.error);
 
     sub2apiGroupOptions = Array.isArray(response?.groups) ? response.groups : [];
+    await pruneStaleSub2apiGroupSelections();
     renderSub2apiGroups();
   } catch (err) {
     setSub2apiGroupStatus('sub2apiGroupsLoadFailed', { message: err.message || err });
@@ -975,12 +1059,13 @@ function renderHeroSmsOperatorOptions() {
 function renderHeroSmsPriceOptions() {
   if (!selectHeroSmsPrice) return;
 
+  const provider = getSelectedPhoneSmsProvider();
   const selectedBeforeRender = normalizeHeroSmsPriceValue(selectHeroSmsPrice.value || lastKnownState?.heroSmsMaxPrice);
   selectHeroSmsPrice.innerHTML = '';
 
   const noLimitOption = document.createElement('option');
   noLimitOption.value = '';
-  noLimitOption.textContent = t('heroSmsPriceNotSet');
+  noLimitOption.textContent = provider === PHONE_SMS_PROVIDER_SMSCLOUD ? t('smsCloudPriceNotSet') : t('heroSmsPriceNotSet');
   selectHeroSmsPrice.appendChild(noLimitOption);
 
   for (const rawOption of heroSmsPriceOptions) {
@@ -1014,7 +1099,10 @@ function applyHeroSmsCustomSelectionFromState(state = null) {
   const source = state && typeof state === 'object' ? state : lastKnownState;
   const operatorValue = normalizeHeroSmsOperatorValue(source?.heroSmsOperator);
   const maxPriceValue = normalizeHeroSmsPriceValue(source?.heroSmsMaxPrice);
-  const priceMode = normalizeHeroSmsPriceMode(source?.heroSmsFixedPrice ? 'fixed' : 'max');
+  const provider = getSelectedPhoneSmsProvider();
+  const priceMode = provider === PHONE_SMS_PROVIDER_SMSCLOUD
+    ? 'max'
+    : normalizeHeroSmsPriceMode(source?.heroSmsFixedPrice ? 'fixed' : 'max');
 
   if (selectHeroSmsOperator) {
     const hasOperator = [...selectHeroSmsOperator.options].some(option => option.value === operatorValue);
@@ -1033,7 +1121,9 @@ function applyHeroSmsCustomSelectionFromState(state = null) {
 
   if (selectHeroSmsPriceMode) {
     selectHeroSmsPriceMode.value = priceMode;
-    if (!normalizeHeroSmsPriceValue(selectHeroSmsPrice?.value) && selectHeroSmsPriceMode.value === 'fixed') {
+    if (provider === PHONE_SMS_PROVIDER_SMSCLOUD) {
+      selectHeroSmsPriceMode.value = 'max';
+    } else if (!normalizeHeroSmsPriceValue(selectHeroSmsPrice?.value) && selectHeroSmsPriceMode.value === 'fixed') {
       selectHeroSmsPriceMode.value = 'max';
     }
   }
@@ -1041,14 +1131,31 @@ function applyHeroSmsCustomSelectionFromState(state = null) {
 
 function setHeroSmsCountryStatus(messageKey, vars = {}) {
   if (!heroSmsCountryStatus) return;
-  heroSmsCountryStatus.textContent = t(messageKey, vars);
+  heroSmsCountryStatus.textContent = t(messageKey, {
+    provider: getPhoneSmsProviderLabel(),
+    ...vars,
+  });
 }
 
 function formatHeroSmsCost(cost) {
   const numeric = Number(cost);
   if (!Number.isFinite(numeric)) return '--';
+  if (getSelectedPhoneSmsProvider() === PHONE_SMS_PROVIDER_SMSCLOUD) {
+    const value = numeric >= 1 ? numeric.toFixed(2) : numeric.toFixed(3);
+    return `${value} 钻石`;
+  }
   if (numeric >= 1) return `$${numeric.toFixed(2)}`;
   return `$${numeric.toFixed(3)}`;
+}
+
+function formatPhoneSmsBalance(balanceValue) {
+  const value = String(balanceValue ?? '').trim();
+  if (!value) return '';
+  if (getSelectedPhoneSmsProvider() !== PHONE_SMS_PROVIDER_SMSCLOUD) return value;
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return `${value} 钻石`;
+  return `${numeric.toFixed(2).replace(/\.?0+$/, '')} 钻石`;
 }
 
 function updateHeroSmsBalanceTip(balanceValue = '') {
@@ -1062,7 +1169,7 @@ function updateHeroSmsBalanceTip(balanceValue = '') {
     return;
   }
 
-  heroSmsBalanceTip.textContent = t('heroSmsBalance', { balance: normalized });
+  heroSmsBalanceTip.textContent = `${getPhoneSmsProviderLabel()} ${t('heroSmsBalance', { balance: formatPhoneSmsBalance(normalized) })}`;
   const balanceNumber = Number(normalized);
   heroSmsBalanceTip.classList.toggle('is-low-balance', Number.isFinite(balanceNumber) && balanceNumber < 3);
 }
@@ -1139,19 +1246,53 @@ function getHeroSmsCountryFilterTokens(country) {
     .filter(Boolean);
 }
 
-function renderHeroSmsCountryOptions() {
-  if (!selectHeroSmsCountry) return;
+function shouldShowPhoneSmsCountry(country) {
+  if (!checkboxPhoneSmsNoWhatsappOnly?.checked) return true;
+  return PHONE_SMS_NO_WHATSAPP_COUNTRY_IDS.has(Number(country?.id || 0));
+}
 
+function getVisibleHeroSmsCountryOptions() {
   const query = String(inputHeroSmsCountrySearch?.value || '').trim().toLowerCase();
-  const selectedBeforeRender = normalizeHeroSmsCountryId(selectHeroSmsCountry.value || lastKnownState?.heroSmsCountryId);
-
-  selectHeroSmsCountry.innerHTML = '';
-
-  const filtered = heroSmsCountryOptions.filter((country) => {
+  return heroSmsCountryOptions.filter((country) => {
+    if (!shouldShowPhoneSmsCountry(country)) return false;
     if (!query) return true;
     const tokens = getHeroSmsCountryFilterTokens(country);
     return tokens.some(token => token.includes(query));
   });
+}
+
+function updateHeroSmsCountryLoadedStatus() {
+  if (!heroSmsCountryOptions.length) {
+    setHeroSmsCountryStatus('heroSmsCountryNotLoaded');
+    return;
+  }
+
+  if (checkboxPhoneSmsNoWhatsappOnly?.checked) {
+    const filteredCount = heroSmsCountryOptions.filter(country => PHONE_SMS_NO_WHATSAPP_COUNTRY_IDS.has(Number(country?.id || 0))).length;
+    setHeroSmsCountryStatus('heroSmsCountryLoadedFiltered', {
+      total: heroSmsCountryOptions.length,
+      filtered: filteredCount,
+      serviceCode: heroSmsResolvedServiceCode,
+      provider: getPhoneSmsProviderLabel(),
+    });
+    return;
+  }
+
+  setHeroSmsCountryStatus('heroSmsCountryLoaded', {
+    total: heroSmsCountryOptions.length,
+    serviceCode: heroSmsResolvedServiceCode,
+    provider: getPhoneSmsProviderLabel(),
+  });
+}
+
+function renderHeroSmsCountryOptions() {
+  if (!selectHeroSmsCountry) return;
+
+  const selectedBeforeRender = normalizeHeroSmsCountryId(selectHeroSmsCountry.value || lastKnownState?.heroSmsCountryId);
+
+  selectHeroSmsCountry.innerHTML = '';
+
+  const filtered = getVisibleHeroSmsCountryOptions();
 
   if (!filtered.length) {
     const emptyOption = document.createElement('option');
@@ -1170,9 +1311,13 @@ function renderHeroSmsCountryOptions() {
     selectHeroSmsCountry.appendChild(option);
   }
 
-  if (selectedBeforeRender) {
+  if (selectedBeforeRender && filtered.some(country => country.id === selectedBeforeRender)) {
     selectHeroSmsCountry.value = String(selectedBeforeRender);
+  } else if (filtered.length) {
+    selectHeroSmsCountry.value = String(filtered[0].id);
   }
+
+  updateHeroSmsCountryLoadedStatus();
 }
 
 function getActiveWorkflowSteps() {
@@ -1203,43 +1348,82 @@ function applyWorkflowStepVisibility() {
 
 function updateHeroSmsUI() {
   const enabled = Boolean(checkboxHeroSmsEnabled?.checked);
-  const hasApiKey = Boolean(String(inputHeroSmsApiKey?.value || '').trim());
+  const provider = getSelectedPhoneSmsProvider();
+  const providerLabel = getPhoneSmsProviderLabel(provider);
+  const isSmsCloud = provider === PHONE_SMS_PROVIDER_SMSCLOUD;
+  const hasApiKey = Boolean(getActivePhoneSmsApiKeyValue(provider));
   const customEnabled = enabled && hasApiKey;
   applyWorkflowStepVisibility();
 
   if (rowHeroSmsEnable) {
     rowHeroSmsEnable.style.display = '';
   }
+  if (rowPhoneSmsProvider) {
+    rowPhoneSmsProvider.style.display = enabled ? '' : 'none';
+  }
+  if (selectPhoneSmsProvider) {
+    selectPhoneSmsProvider.value = provider;
+  }
   if (rowHeroSmsApiKey) {
     rowHeroSmsApiKey.style.display = enabled ? '' : 'none';
+  }
+  if (labelPhoneSmsApiKey) {
+    labelPhoneSmsApiKey.textContent = t(isSmsCloud ? 'labelSmsCloudApiKey' : 'labelHeroSmsApiKey');
+  }
+  if (inputHeroSmsApiKey) {
+    inputHeroSmsApiKey.style.display = enabled && !isSmsCloud ? '' : 'none';
+  }
+  if (inputSmsCloudApiKey) {
+    inputSmsCloudApiKey.style.display = enabled && isSmsCloud ? '' : 'none';
+  }
+  if (inputHeroSmsApiKey) {
+    inputHeroSmsApiKey.disabled = !enabled || isSmsCloud;
+  }
+  if (inputSmsCloudApiKey) {
+    inputSmsCloudApiKey.disabled = !enabled || !isSmsCloud;
   }
   if (rowHeroSmsCountry) {
     rowHeroSmsCountry.style.display = enabled ? '' : 'none';
   }
+  if (checkboxPhoneSmsNoWhatsappOnly) {
+    checkboxPhoneSmsNoWhatsappOnly.disabled = !enabled;
+  }
   if (rowHeroSmsDuration) {
-    rowHeroSmsDuration.style.display = enabled ? '' : 'none';
+    rowHeroSmsDuration.style.display = enabled && !isSmsCloud ? '' : 'none';
   }
   if (rowHeroSmsOperator) {
-    rowHeroSmsOperator.style.display = enabled ? '' : 'none';
+    rowHeroSmsOperator.style.display = enabled && !isSmsCloud ? '' : 'none';
   }
   if (rowHeroSmsPriceMode) {
-    rowHeroSmsPriceMode.style.display = enabled ? '' : 'none';
+    rowHeroSmsPriceMode.style.display = enabled && !isSmsCloud ? '' : 'none';
   }
   if (rowHeroSmsPrice) {
     rowHeroSmsPrice.style.display = enabled ? '' : 'none';
   }
+  if (labelPhoneSmsPrice) {
+    labelPhoneSmsPrice.textContent = t(isSmsCloud ? 'labelSmsCloudPrice' : 'labelHeroSmsPrice');
+  }
   if (rowHeroSmsPriceCustom) {
     rowHeroSmsPriceCustom.style.display = enabled ? '' : 'none';
+  }
+  if (labelPhoneSmsPriceCustom) {
+    labelPhoneSmsPriceCustom.textContent = t(isSmsCloud ? 'labelSmsCloudPriceCustom' : 'labelHeroSmsPriceCustom');
+  }
+  if (heroSmsPriceCustomTip) {
+    heroSmsPriceCustomTip.textContent = t(isSmsCloud ? 'smsCloudPriceCustomTip' : 'heroSmsPriceCustomTip');
   }
 
   if (selectHeroSmsDuration) {
     selectHeroSmsDuration.value = '20';
   }
   if (selectHeroSmsOperator) {
-    selectHeroSmsOperator.disabled = !customEnabled;
+    selectHeroSmsOperator.disabled = !customEnabled || isSmsCloud;
   }
   if (selectHeroSmsPriceMode) {
-    selectHeroSmsPriceMode.disabled = !customEnabled;
+    selectHeroSmsPriceMode.disabled = !customEnabled || isSmsCloud;
+    if (isSmsCloud) {
+      selectHeroSmsPriceMode.value = 'max';
+    }
   }
   if (selectHeroSmsPrice) {
     selectHeroSmsPrice.disabled = !customEnabled;
@@ -1267,13 +1451,20 @@ function updateHeroSmsUI() {
     applyHeroSmsCustomSelectionFromState(lastKnownState);
   }
 
+  if (heroSmsBalanceTip && enabled && !heroSmsLastBalanceValue) {
+    heroSmsBalanceTip.textContent = `${providerLabel} ${t('heroSmsBalanceUnknown')}`;
+  }
+
   updateButtonStates();
   updateProgressCounter();
 }
 
 async function persistHeroSmsCountrySelection() {
   const selectedCountryId = normalizeHeroSmsCountryId(selectHeroSmsCountry.value);
-  const selectedCountry = heroSmsCountryOptions.find(item => item.id === selectedCountryId) || null;
+  const visibleCountries = getVisibleHeroSmsCountryOptions();
+  const selectedCountry = visibleCountries.find(item => item.id === selectedCountryId)
+    || heroSmsCountryOptions.find(item => item.id === selectedCountryId)
+    || null;
 
   await chrome.runtime.sendMessage({
     type: 'SAVE_SETTING',
@@ -1302,9 +1493,11 @@ async function persistHeroSmsCountrySelection() {
 }
 
 async function persistHeroSmsCustomSettings() {
-  const heroSmsOperator = normalizeHeroSmsOperatorValue(selectHeroSmsOperator?.value);
+  const provider = getSelectedPhoneSmsProvider();
+  const isSmsCloud = provider === PHONE_SMS_PROVIDER_SMSCLOUD;
+  const heroSmsOperator = isSmsCloud ? '' : normalizeHeroSmsOperatorValue(selectHeroSmsOperator?.value);
   const heroSmsMaxPrice = getEffectiveHeroSmsMaxPriceValue();
-  let heroSmsFixedPrice = normalizeHeroSmsPriceMode(selectHeroSmsPriceMode?.value) === 'fixed';
+  let heroSmsFixedPrice = !isSmsCloud && normalizeHeroSmsPriceMode(selectHeroSmsPriceMode?.value) === 'fixed';
 
   if (!heroSmsMaxPrice && heroSmsFixedPrice) {
     heroSmsFixedPrice = false;
@@ -1337,7 +1530,7 @@ async function loadHeroSmsCustomOptions(options = {}) {
     return;
   }
 
-  const apiKey = String(inputHeroSmsApiKey?.value || '').trim();
+  const apiKey = getActivePhoneSmsApiKeyValue();
   const countryId = normalizeHeroSmsCountryId(selectHeroSmsCountry?.value || lastKnownState?.heroSmsCountryId);
   if (!apiKey || !countryId) {
     heroSmsOperatorOptions = [];
@@ -1348,7 +1541,9 @@ async function loadHeroSmsCustomOptions(options = {}) {
     return;
   }
 
-  const selectedCountry = heroSmsCountryOptions.find(item => item.id === countryId) || null;
+  const selectedCountry = getVisibleHeroSmsCountryOptions().find(item => item.id === countryId)
+    || heroSmsCountryOptions.find(item => item.id === countryId)
+    || null;
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -1378,12 +1573,7 @@ async function loadHeroSmsCustomOptions(options = {}) {
 
     renderHeroSmsOperatorOptions();
     renderHeroSmsPriceOptions();
-    if (heroSmsCountryOptions.length) {
-      setHeroSmsCountryStatus('heroSmsCountryLoaded', {
-        total: heroSmsCountryOptions.length,
-        serviceCode: heroSmsResolvedServiceCode,
-      });
-    }
+    updateHeroSmsCountryLoadedStatus();
     applyHeroSmsCustomSelectionFromState({
       ...(lastKnownState || {}),
       heroSmsOperator: response?.selectedOperator ?? lastKnownState?.heroSmsOperator,
@@ -1407,7 +1597,7 @@ async function loadHeroSmsCountries(options = {}) {
   const { forceRefresh = false, silent = false } = options;
 
   if (!checkboxHeroSmsEnabled?.checked) return;
-  if (!String(inputHeroSmsApiKey?.value || '').trim()) {
+  if (!getActivePhoneSmsApiKeyValue()) {
     setHeroSmsCountryStatus('heroSmsNeedApiKey');
     heroSmsOperatorOptions = [];
     heroSmsPriceOptions = [];
@@ -1415,7 +1605,7 @@ async function loadHeroSmsCountries(options = {}) {
     renderHeroSmsPriceOptions();
     applyHeroSmsCustomSelectionFromState(lastKnownState);
     if (!silent) {
-      showToast(t('heroSmsNeedApiKey'), 'warn', 2400);
+      showToast(t('heroSmsNeedApiKey', { provider: getPhoneSmsProviderLabel() }), 'warn', 2400);
     }
     return;
   }
@@ -1443,17 +1633,19 @@ async function loadHeroSmsCountries(options = {}) {
     renderHeroSmsCountryOptions();
 
     const selectedFromState = normalizeHeroSmsCountryId(lastKnownState?.heroSmsCountryId);
-    if (selectedFromState) {
+    if (selectedFromState && getVisibleHeroSmsCountryOptions().some(country => country.id === selectedFromState)) {
       selectHeroSmsCountry.value = String(selectedFromState);
+    } else {
+      const firstVisibleCountry = getVisibleHeroSmsCountryOptions()[0] || null;
+      if (firstVisibleCountry) {
+        selectHeroSmsCountry.value = String(firstVisibleCountry.id);
+      }
     }
 
     if (!heroSmsCountryOptions.length) {
       setHeroSmsCountryStatus('heroSmsCountryEmpty');
     } else {
-      setHeroSmsCountryStatus('heroSmsCountryLoaded', {
-        total: heroSmsCountryOptions.length,
-        serviceCode: heroSmsResolvedServiceCode,
-      });
+      updateHeroSmsCountryLoadedStatus();
     }
 
     updateHeroSmsBalanceTip(response?.balanceLabel || response?.balance || '');
@@ -1514,12 +1706,11 @@ function applyLanguage(language) {
   renderHeroSmsOperatorOptions();
   renderHeroSmsPriceOptions();
   applyHeroSmsCustomSelectionFromState(lastKnownState);
-  if (heroSmsCountryOptions.length) {
-    setHeroSmsCountryStatus('heroSmsCountryLoaded', {
-      total: heroSmsCountryOptions.length,
-      serviceCode: heroSmsResolvedServiceCode,
-    });
-  } else {
+  if (checkboxHeroSmsEnabled?.checked && heroSmsCountryOptions.length) {
+    updateHeroSmsCountryLoadedStatus();
+  } else if (!checkboxHeroSmsEnabled?.checked) {
+    setHeroSmsCountryStatus('heroSmsCountryNotLoaded');
+  } else if (!getActivePhoneSmsApiKeyValue()) {
     setHeroSmsCountryStatus('heroSmsCountryNotLoaded');
   }
   updateHeroSmsBalanceTip(heroSmsLastBalanceValue);
@@ -1632,7 +1823,16 @@ async function restoreState() {
       selectedSub2apiGroupIds.add(groupId);
     }
     checkboxHeroSmsEnabled.checked = Boolean(state.heroSmsEnabled);
+    if (checkboxPhoneSmsNoWhatsappOnly) {
+      checkboxPhoneSmsNoWhatsappOnly.checked = Boolean(state.phoneSmsNoWhatsappOnly);
+    }
+    if (selectPhoneSmsProvider) {
+      selectPhoneSmsProvider.value = normalizePhoneSmsProviderValue(state.heroSmsProvider);
+    }
     inputHeroSmsApiKey.value = state.heroSmsApiKey || '';
+    if (inputSmsCloudApiKey) {
+      inputSmsCloudApiKey.value = state.smsCloudApiKey || '';
+    }
     if (selectHeroSmsPriceMode) {
       selectHeroSmsPriceMode.value = state.heroSmsFixedPrice ? 'fixed' : 'max';
     }
@@ -1751,11 +1951,14 @@ function updateEmailSourceUI() {
 }
 
 async function syncRuntimeSettingsBeforeExecution() {
+  const heroSmsProvider = getSelectedPhoneSmsProvider();
   const heroSmsCountryId = normalizeHeroSmsCountryId(selectHeroSmsCountry.value);
   const heroSmsCountryMeta = heroSmsCountryOptions.find(item => item.id === heroSmsCountryId) || null;
-  const heroSmsOperator = normalizeHeroSmsOperatorValue(selectHeroSmsOperator?.value);
+  const heroSmsOperator = heroSmsProvider === PHONE_SMS_PROVIDER_SMSCLOUD ? '' : normalizeHeroSmsOperatorValue(selectHeroSmsOperator?.value);
   const heroSmsMaxPrice = getEffectiveHeroSmsMaxPriceValue();
-  const heroSmsFixedPrice = normalizeHeroSmsPriceMode(selectHeroSmsPriceMode?.value) === 'fixed' && Boolean(heroSmsMaxPrice);
+  const heroSmsFixedPrice = heroSmsProvider !== PHONE_SMS_PROVIDER_SMSCLOUD
+    && normalizeHeroSmsPriceMode(selectHeroSmsPriceMode?.value) === 'fixed'
+    && Boolean(heroSmsMaxPrice);
 
   if (!heroSmsMaxPrice && selectHeroSmsPriceMode?.value === 'fixed') {
     selectHeroSmsPriceMode.value = 'max';
@@ -1770,9 +1973,12 @@ async function syncRuntimeSettingsBeforeExecution() {
       cpaManagementKey: inputCpaManagementKey.value.trim(),
       sub2apiBaseUrl: inputSub2apiBaseUrl.value.trim(),
       sub2apiAdminApiKey: inputSub2apiApiKey.value.trim(),
-      sub2apiSelectedGroupIds: [...selectedSub2apiGroupIds],
+      sub2apiSelectedGroupIds: getVisibleSelectedSub2apiGroupIds(),
       heroSmsEnabled: checkboxHeroSmsEnabled.checked,
+      heroSmsProvider,
       heroSmsApiKey: inputHeroSmsApiKey.value.trim(),
+      smsCloudApiKey: inputSmsCloudApiKey?.value.trim() || '',
+      phoneSmsNoWhatsappOnly: Boolean(checkboxPhoneSmsNoWhatsappOnly?.checked),
       heroSmsCountryId,
       heroSmsCountryMeta: heroSmsCountryMeta
         ? {
@@ -2271,6 +2477,45 @@ btnSub2apiLoadGroups.addEventListener('click', async () => {
   await loadSub2apiGroups();
 });
 
+selectPhoneSmsProvider.addEventListener('change', async () => {
+  const heroSmsProvider = getSelectedPhoneSmsProvider();
+  heroSmsCountryOptions = [];
+  heroSmsOperatorOptions = [];
+  heroSmsPriceOptions = [];
+  heroSmsResolvedServiceCode = '';
+  renderHeroSmsCountryOptions();
+  renderHeroSmsOperatorOptions();
+  renderHeroSmsPriceOptions();
+  setHeroSmsCountryStatus('heroSmsCountryNotLoaded');
+  updateHeroSmsBalanceTip('');
+  updateHeroSmsUI();
+  if (lastKnownState && typeof lastKnownState === 'object') {
+    lastKnownState.heroSmsProvider = heroSmsProvider;
+    lastKnownState.heroSmsCountryId = 0;
+    lastKnownState.heroSmsCountryMeta = null;
+    lastKnownState.heroSmsOperator = '';
+    lastKnownState.heroSmsMaxPrice = '';
+    lastKnownState.heroSmsFixedPrice = false;
+  }
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: {
+      heroSmsProvider,
+      heroSmsCountryId: 0,
+      heroSmsCountryMeta: null,
+      heroSmsOperator: '',
+      heroSmsMaxPrice: '',
+      heroSmsFixedPrice: false,
+      phoneSmsNoWhatsappOnly: Boolean(checkboxPhoneSmsNoWhatsappOnly?.checked),
+    },
+  });
+
+  if (checkboxHeroSmsEnabled.checked && getActivePhoneSmsApiKeyValue(heroSmsProvider)) {
+    await loadHeroSmsCountries({ forceRefresh: true, silent: true });
+  }
+});
+
 checkboxHeroSmsEnabled.addEventListener('change', async () => {
   updateHeroSmsUI();
   await chrome.runtime.sendMessage({
@@ -2278,8 +2523,11 @@ checkboxHeroSmsEnabled.addEventListener('change', async () => {
     source: 'sidepanel',
     payload: { heroSmsEnabled: checkboxHeroSmsEnabled.checked },
   });
+  if (lastKnownState && typeof lastKnownState === 'object') {
+    lastKnownState.heroSmsEnabled = checkboxHeroSmsEnabled.checked;
+  }
 
-  if (checkboxHeroSmsEnabled.checked && String(inputHeroSmsApiKey.value || '').trim()) {
+  if (checkboxHeroSmsEnabled.checked && getActivePhoneSmsApiKeyValue()) {
     await loadHeroSmsCountries({ silent: true });
   }
 });
@@ -2292,6 +2540,9 @@ inputHeroSmsApiKey.addEventListener('change', async () => {
     source: 'sidepanel',
     payload: { heroSmsApiKey },
   });
+  if (lastKnownState && typeof lastKnownState === 'object') {
+    lastKnownState.heroSmsApiKey = heroSmsApiKey;
+  }
 
   if (!heroSmsApiKey) {
     heroSmsCountryOptions = [];
@@ -2316,6 +2567,41 @@ inputHeroSmsApiKey.addEventListener('change', async () => {
   }
 });
 
+inputSmsCloudApiKey.addEventListener('change', async () => {
+  const smsCloudApiKey = String(inputSmsCloudApiKey.value || '').trim();
+  updateHeroSmsUI();
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: { smsCloudApiKey },
+  });
+  if (lastKnownState && typeof lastKnownState === 'object') {
+    lastKnownState.smsCloudApiKey = smsCloudApiKey;
+  }
+
+  if (!smsCloudApiKey) {
+    heroSmsCountryOptions = [];
+    heroSmsOperatorOptions = [];
+    heroSmsPriceOptions = [];
+    heroSmsResolvedServiceCode = '';
+    renderHeroSmsCountryOptions();
+    renderHeroSmsOperatorOptions();
+    renderHeroSmsPriceOptions();
+    applyHeroSmsCustomSelectionFromState({
+      heroSmsOperator: '',
+      heroSmsMaxPrice: '',
+      heroSmsFixedPrice: false,
+    });
+    setHeroSmsCountryStatus('heroSmsCountryNotLoaded');
+    updateHeroSmsBalanceTip('');
+    return;
+  }
+
+  if (checkboxHeroSmsEnabled.checked && getSelectedPhoneSmsProvider() === PHONE_SMS_PROVIDER_SMSCLOUD) {
+    await loadHeroSmsCountries({ forceRefresh: true, silent: true });
+  }
+});
+
 btnHeroSmsLoadCountries.addEventListener('click', async () => {
   await loadHeroSmsCountries({ forceRefresh: true });
 });
@@ -2330,11 +2616,31 @@ selectHeroSmsCountry.addEventListener('change', async () => {
   await persistHeroSmsCustomSettings();
 });
 
+checkboxPhoneSmsNoWhatsappOnly.addEventListener('change', async () => {
+  renderHeroSmsCountryOptions();
+  await persistHeroSmsCountrySelection();
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: { phoneSmsNoWhatsappOnly: checkboxPhoneSmsNoWhatsappOnly.checked },
+  });
+  if (lastKnownState && typeof lastKnownState === 'object') {
+    lastKnownState.phoneSmsNoWhatsappOnly = checkboxPhoneSmsNoWhatsappOnly.checked;
+  }
+  await loadHeroSmsCustomOptions({ silent: true });
+});
+
 selectHeroSmsOperator.addEventListener('change', async () => {
+  if (getSelectedPhoneSmsProvider() === PHONE_SMS_PROVIDER_SMSCLOUD) return;
   await persistHeroSmsCustomSettings();
 });
 
 selectHeroSmsPriceMode.addEventListener('change', async () => {
+  if (getSelectedPhoneSmsProvider() === PHONE_SMS_PROVIDER_SMSCLOUD) {
+    selectHeroSmsPriceMode.value = 'max';
+    await persistHeroSmsCustomSettings();
+    return;
+  }
   if (normalizeHeroSmsPriceMode(selectHeroSmsPriceMode.value) === 'fixed') {
     const selectedPrice = getEffectiveHeroSmsMaxPriceValue();
     if (!selectedPrice) {
