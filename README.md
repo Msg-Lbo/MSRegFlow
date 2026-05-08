@@ -182,7 +182,6 @@ API Root：`https://smscloud.sbs/api/system/`
 | 国家/地区 | English | 区号 | 网页端选项 |
 |---|---|---:|---|
 | 印度尼西亚 | Indonesia | 62 | 印度尼西亚 +(62) |
-| 哈萨克斯坦 | Kazakhstan | 7 | 俄罗斯 +(7) |
 | 越南 | Vietnam | 84 | 越南 +(84) |
 | 喀麦隆 | Cameroon | 237 | 喀麦隆 +(237) |
 | 安哥拉 | Angola | 244 | 安哥拉 +(244) |

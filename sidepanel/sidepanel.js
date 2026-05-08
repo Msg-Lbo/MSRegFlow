@@ -110,7 +110,7 @@ const currentManifestVersionLabel = formatVersionLabel(currentManifestVersion);
 const PHONE_SMS_PROVIDER_HEROSMS = 'herosms';
 const PHONE_SMS_PROVIDER_SMSCLOUD = 'smscloud';
 const PHONE_SMS_NO_WHATSAPP_COUNTRY_IDS = new Set([
-  2, 6, 7, 10, 11, 14, 17, 19, 20, 21, 22, 24, 26, 38, 40, 41, 51, 52, 53, 57,
+  6, 7, 10, 11, 14, 17, 19, 20, 21, 22, 24, 26, 38, 40, 41, 51, 52, 53, 57,
   58, 59, 60, 61, 64, 65, 69, 70, 71, 72, 74, 75, 76, 78, 80, 83, 86, 88, 91,
   92, 96, 99, 102, 105, 110, 113, 115, 116, 119, 125, 130, 133, 143, 147, 148,
   152, 153, 157, 160, 161, 163, 171, 182, 188, 204,
