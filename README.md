@@ -1,6 +1,6 @@
 # MSRegFlow
 
-当前版本：`1.2.0`
+当前版本：`1.2.1`
 
 `MSRegFlow` 是一个面向 **Microsoft Account Manager API** 的 Chrome 扩展，
 用于自动执行 Codex / OpenAI OAuth 注册流程（含收码、授权、回调导入）。
